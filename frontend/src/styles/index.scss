@@ -1,0 +1,150 @@
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Sora:wght@500;600;700;800&display=swap');
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  font-family: 'IBM Plex Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  color: #0f2030;
+  background:
+    radial-gradient(circle at 8% 12%, rgba(24, 192, 198, 0.18), transparent 36%),
+    radial-gradient(circle at 90% 6%, rgba(241, 117, 53, 0.2), transparent 28%),
+    linear-gradient(160deg, #edf4fa 0%, #f7fafd 52%, #eef4fa 100%);
+  line-height: 1.5;
+}
+
+:root {
+  --el-color-primary: #0e839b;
+  --el-color-success: #15946c;
+  --el-color-warning: #d17a28;
+  --el-color-danger: #cd3f52;
+  --el-color-info: #5d7084;
+  --el-border-radius-base: 14px;
+  --el-box-shadow-lighter: 0 16px 40px rgba(12, 44, 64, 0.11);
+  --app-title-font: 'Sora', 'IBM Plex Sans', sans-serif;
+  --app-panel-bg: rgba(255, 255, 255, 0.88);
+  --app-panel-border: rgba(133, 170, 196, 0.35);
+  --app-header-bg: rgba(246, 250, 253, 0.84);
+  --app-header-border: rgba(20, 56, 78, 0.14);
+}
+
+#app {
+  min-height: 100vh;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  margin-top: 0;
+  color: #102437;
+  font-family: var(--app-title-font);
+  letter-spacing: -0.015em;
+}
+
+.el-card {
+  border-radius: 18px;
+  border: 1px solid var(--app-panel-border);
+  box-shadow: var(--el-box-shadow-lighter);
+  background: var(--app-panel-bg);
+  backdrop-filter: blur(10px);
+}
+
+.el-card__header {
+  border-bottom: 1px solid rgba(33, 76, 109, 0.12);
+}
+
+.el-button {
+  border-radius: 14px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.el-button--primary {
+  box-shadow: 0 10px 24px rgba(13, 130, 151, 0.24);
+}
+
+.el-input__wrapper,
+.el-select__wrapper,
+.el-textarea__inner {
+  border-radius: 12px;
+  box-shadow: 0 0 0 1px rgba(62, 101, 130, 0.12) inset;
+}
+
+.el-tag {
+  border-radius: 999px;
+  font-weight: 600;
+}
+
+.el-table {
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+.el-table th.el-table__cell {
+  background: #f1f6fb;
+  color: #1c3a53;
+  font-weight: 700;
+}
+
+.el-table tr {
+  transition: background-color 0.2s ease;
+}
+
+.el-table tr:hover > td.el-table__cell {
+  background: #f4fbff !important;
+}
+
+.page-title,
+.section-title,
+.card-title {
+  color: #12293e !important;
+  font-family: var(--app-title-font);
+  font-weight: 700 !important;
+}
+
+.text-center {
+  text-align: center;
+}
+
+.text-left {
+  text-align: left;
+}
+
+.text-right {
+  text-align: right;
+}
+
+.flex {
+  display: flex;
+}
+
+.flex-center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.flex-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+@media (max-width: 768px) {
+  .mobile-hidden {
+    display: none !important;
+  }
+}
+
+@media (min-width: 769px) {
+  .desktop-hidden {
+    display: none !important;
+  }
+}

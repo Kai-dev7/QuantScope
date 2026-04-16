@@ -1,0 +1,21 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 📖 项目文档 / Project Documentation
+    url: https://github.com/hsliuping/QuantScope/blob/main/README.md
+    about: 查看完整的项目文档和使用指南 / View complete project documentation and usage guide
+  
+  - name: 🐳 Docker部署指南 / Docker Deployment Guide
+    url: https://github.com/hsliuping/QuantScope/blob/main/docs/DOCKER_GUIDE.md
+    about: Docker容器化部署的详细指南 / Detailed guide for Docker containerized deployment
+  
+  - name: 💬 讨论区 / Discussions
+    url: https://github.com/hsliuping/QuantScope/discussions
+    about: 技术讨论、想法分享和社区交流 / Technical discussions, idea sharing and community communication
+  
+  - name: 📧 邮件联系 / Email Contact
+    url: mailto:hsliup@163.com
+    about: 直接邮件联系项目维护者 / Direct email contact with project maintainer
+  
+  - name: 🌟 源项目 / Original Project
+    url: https://github.com/TauricResearch/TradingAgents
+    about: 查看原始的TradingAgents项目 / View the original TradingAgents project
