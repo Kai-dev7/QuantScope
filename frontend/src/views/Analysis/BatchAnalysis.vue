@@ -719,14 +719,13 @@ const resetForm = () => {
         .stock-textarea {
           :deep(.el-textarea__inner) {
             border-radius: 12px;
-            border: 2px solid #e2e8f0;
             font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
             font-size: 14px;
             line-height: 1.6;
 
             &:focus {
-              border-color: #3b82f6;
-              box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+              border-color: var(--el-color-primary);
+              box-shadow: 0 0 0 1px var(--el-color-primary) inset !important;
             }
           }
         }
@@ -780,7 +779,7 @@ const resetForm = () => {
           color: #1a202c;
           margin: 0 0 16px 0;
           padding-bottom: 8px;
-          border-bottom: 2px solid #e2e8f0;
+          border-bottom: 2px solid var(--el-border-color);
         }
       }
 

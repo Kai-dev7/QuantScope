@@ -1,15 +1,5 @@
 <template>
   <div class="header-actions">
-    <!-- 主题切换 -->
-    <el-tooltip content="切换主题" placement="bottom">
-      <el-button type="text" @click="toggleTheme" class="action-btn">
-        <el-icon>
-          <Sunny v-if="appStore.isDarkTheme" />
-          <Moon v-else />
-        </el-icon>
-      </el-button>
-    </el-tooltip>
-
     <!-- 全屏切换 -->
     <el-tooltip content="全屏" placement="bottom">
       <el-button type="text" @click="toggleFullscreen" class="action-btn">
@@ -67,8 +57,6 @@ import { useNotificationStore } from '@/stores/notifications'
 import { useAuthStore } from '@/stores/auth'
 import { storeToRefs } from 'pinia'
 import {
-  Sunny,
-  Moon,
   FullScreen,
   Bell,
   QuestionFilled
@@ -83,7 +71,6 @@ const filter = ref<'all' | 'unread'>('all')
 let timerCount: any = null
 let timerList: any = null
 
-const toggleTheme = () => { appStore.toggleTheme() }
 const toggleFullscreen = () => {
   if (document.fullscreenElement) document.exitFullscreen()
   else document.documentElement.requestFullscreen()
@@ -139,21 +126,23 @@ function showHelp() {
 .header-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 
   .action-btn {
-    width: 36px;
-    height: 36px;
-    border-radius: 12px;
-    border: 1px solid #dbe6f1;
-    background: rgba(255, 255, 255, 0.8);
+    width: 40px;
+    height: 40px;
+    border-radius: 14px;
+    border: 1px solid rgba(137, 159, 181, 0.18);
+    background: rgba(255, 255, 255, 0.68);
     display: flex;
     align-items: center;
     justify-content: center;
     transition: all 0.2s ease;
+    box-shadow: 0 10px 22px rgba(18, 31, 45, 0.06);
 
     &:hover {
-      border-color: #afc4d8;
+      border-color: rgba(57, 94, 127, 0.18);
+      background: rgba(255, 255, 255, 0.86);
       transform: translateY(-1px);
     }
 
@@ -162,10 +151,10 @@ function showHelp() {
 }
 
 /* 通知抽屉样式 */
-.notif-toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.notif-toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .notif-list { display: flex; flex-direction: column; gap: 12px; }
-.notif-item { padding: 10px 8px; border-radius: 8px; border: 1px solid var(--el-border-color-lighter); }
-.notif-item.unread { background: var(--el-fill-color-light); }
+.notif-item { padding: 12px 10px; border-radius: 14px; border: 1px solid rgba(128, 150, 171, 0.16); background: rgba(255,255,255,0.76); }
+.notif-item.unread { background: rgba(15, 118, 110, 0.06); }
 .notif-item .row { display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: var(--el-text-color-secondary); margin-bottom: 4px; }
 .notif-item .title { font-weight: 600; cursor: pointer; margin-bottom: 4px; }
 .notif-item .title:hover { text-decoration: underline; }

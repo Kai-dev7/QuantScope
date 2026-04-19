@@ -23,6 +23,7 @@ init_logging()
 from tradingagents.graph.trading_graph import TradingAgentsGraph
 from tradingagents.default_config import DEFAULT_CONFIG
 from app.services.simple_analysis_service import create_analysis_config, get_provider_by_model_name
+from app.services.planner_service import planner_service
 from app.models.analysis import (
     AnalysisParameters, AnalysisResult, AnalysisTask, AnalysisBatch,
     AnalysisStatus, BatchStatus, SingleAnalysisRequest, BatchAnalysisRequest
@@ -42,6 +43,14 @@ from app.models.config import UsageRecord
 
 import logging
 logger = logging.getLogger(__name__)
+
+
+def _merge_custom_prompt(custom_prompt: Optional[str], planner_focus_hint: str) -> str:
+    if custom_prompt and planner_focus_hint:
+        return f"{custom_prompt.strip()}\n\n[Planner重点]\n{planner_focus_hint}"
+    if planner_focus_hint:
+        return f"[Planner重点]\n{planner_focus_hint}"
+    return custom_prompt or ""
 
 
 class AnalysisService:
@@ -186,6 +195,22 @@ class AnalysisService:
             # 参数配置
             progress_tracker.update_progress("⚙️ 配置分析参数")
 
+            planner_result = None
+            if getattr(task.parameters, "planner_enabled", True):
+                progress_tracker.update_progress("🧭 生成分析计划")
+                planner_result = planner_service.plan(
+                    symbol=task.symbol,
+                    user_goal=getattr(task.parameters, "custom_prompt", None),
+                    selected_analysts=task.parameters.selected_analysts,
+                    research_depth=task.parameters.research_depth,
+                )
+                task.parameters.selected_analysts = planner_result.analysts
+                task.parameters.research_depth = planner_result.depth
+                task.parameters.custom_prompt = _merge_custom_prompt(
+                    getattr(task.parameters, "custom_prompt", None),
+                    planner_result.focus_hint,
+                )
+
             # 使用标准配置函数创建完整配置
             from app.services.simple_analysis_service import create_analysis_config
             config = create_analysis_config(
@@ -198,6 +223,9 @@ class AnalysisService:
                 quick_model_config=quick_model_config,  # 传递模型配置
                 deep_model_config=deep_model_config     # 传递模型配置
             )
+            if planner_result:
+                config["planner_plan"] = planner_result.to_dict()
+                config["focus_hint"] = planner_result.focus_hint
 
             # 启动引擎
             progress_tracker.update_progress("🚀 初始化AI分析引擎")
@@ -220,6 +248,8 @@ class AnalysisService:
                 analysis_date,
                 progress_callback,
                 task_id=task.task_id,
+                planner_plan=config.get("planner_plan"),
+                focus_hint=config.get("focus_hint"),
             )
 
             execution_time = (datetime.now(timezone.utc) - start_time).total_seconds()
@@ -243,6 +273,8 @@ class AnalysisService:
                 tokens_used=decision.get("tokens_used", 0),
                 model_info=model_info  # 🔥 添加模型信息字段
             )
+            if planner_result and isinstance(result.detailed_analysis, dict):
+                result.detailed_analysis["planner_plan"] = planner_result.to_dict()
 
             logger.info(f"✅ [线程池] 分析任务完成: {task.task_id} - 耗时{execution_time:.2f}秒")
             return result

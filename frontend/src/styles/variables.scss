@@ -1,40 +1,30 @@
-// SCSS变量定义
+$color-bg-canvas: #f8fafc;
+$color-bg-panel: #ffffff;
+$color-bg-panel-strong: #ffffff;
+$color-bg-sidebar: #0f172a;
+$color-bg-sidebar-alt: #1e293b;
+$color-bg-header: #ffffff;
 
-// 颜色变量
-$primary-color: #409EFF;
-$success-color: #67C23A;
-$warning-color: #E6A23C;
-$danger-color: #F56C6C;
-$info-color: #909399;
+$color-text-primary: #1e293b;
+$color-text-secondary: #475569;
+$color-text-muted: #94a3b8;
 
-// 间距变量
-$spacing-xs: 4px;
-$spacing-sm: 8px;
-$spacing-md: 16px;
-$spacing-lg: 24px;
-$spacing-xl: 32px;
+$color-border-soft: #e2e8f0;
+$color-border-strong: #cbd5e1;
 
-// 字体大小
-$font-size-xs: 12px;
-$font-size-sm: 14px;
-$font-size-md: 16px;
-$font-size-lg: 18px;
-$font-size-xl: 20px;
+$color-brand: #0f766e;
+$color-brand-accent: #1d4ed8;
+$color-brand-warm: #c97328;
+$color-success: #0f9f6e;
+$color-danger: #c64545;
 
-// 边框圆角
-$border-radius-sm: 4px;
-$border-radius-md: 6px;
-$border-radius-lg: 8px;
-$border-radius-xl: 12px;
+$shadow-sm: 0 10px 24px rgba(16, 33, 49, 0.06);
+$shadow-md: 0 18px 40px rgba(16, 33, 49, 0.10);
+$shadow-lg: 0 28px 60px rgba(13, 27, 42, 0.14);
 
-// 阴影
-$box-shadow-light: 0 2px 4px rgba(0, 0, 0, 0.1);
-$box-shadow-medium: 0 4px 8px rgba(0, 0, 0, 0.15);
-$box-shadow-heavy: 0 8px 16px rgba(0, 0, 0, 0.2);
+$radius-sm: 12px;
+$radius-md: 18px;
+$radius-lg: 26px;
 
-// 断点
-$breakpoint-xs: 480px;
-$breakpoint-sm: 768px;
-$breakpoint-md: 992px;
-$breakpoint-lg: 1200px;
-$breakpoint-xl: 1920px;
+$font-sans: 'IBM Plex Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+$font-display: 'Sora', 'IBM Plex Sans', sans-serif;

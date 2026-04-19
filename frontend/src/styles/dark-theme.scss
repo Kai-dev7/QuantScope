@@ -6,20 +6,43 @@
 // 暗色主题下的全局样式优化
 html.dark {
   // 全局背景设为深色
-  background-color: #0b0f19 !important;
-  color: #e5e7eb;
+  background-color: #0f172a !important;
+  color: #e2e8f0;
 
-  --el-color-primary: #6ba4ff;
-  --el-color-success: #34d399;
-  --el-color-warning: #fbbf24;
-  --el-color-danger: #f87171;
+  // 重写 Element Plus 的核心背景和文字变量
+  --el-bg-color-page: #0f172a;
+  --el-bg-color: #1e293b;
+  --el-bg-color-overlay: #1e293b;
+  --el-text-color-primary: #f1f5f9;
+  --el-text-color-regular: #cbd5e1;
+  --el-text-color-secondary: #94a3b8;
+  --el-text-color-placeholder: #64748b;
+  --el-border-color: #334155;
+  --el-border-color-light: #1e293b;
+  --el-border-color-lighter: #0f172a;
+  --el-fill-color-blank: #0f172a;
+  --el-fill-color-light: #1e293b;
+  --el-fill-color-lighter: #0f172a;
+  --el-fill-color: #1e293b;
+
+  --el-color-primary: #3b82f6;
+  --el-color-success: #10b981;
+  --el-color-warning: #f59e0b;
+  --el-color-danger: #ef4444;
   --el-color-info: #94a3b8;
-  --app-panel-bg: #111827;
-  --app-panel-border: #1f2937;
+
+  --app-panel-bg: #1e293b;
+  --app-panel-bg-strong: #1e293b;
+  --app-panel-border: #334155;
+  --app-panel-border-strong: #475569;
+  --app-header-bg: #1e293b;
+  --app-header-border: #334155;
+  --app-sidebar-bg: #0f172a;
+  --app-sidebar-bg-alt: #020617;
 
   // 优化标题文字
   h1, h2, h3, h4, h5, h6 {
-    color: #ffffff !important;
+    color: #f1f5f9 !important;
     font-weight: 600 !important;
   }
 
@@ -42,7 +65,7 @@ html.dark {
   // 优化卡片标题
   .el-card__header {
     h1, h2, h3, h4, h5, h6 {
-      color: #ffffff !important;
+      color: #f1f5f9 !important;
       font-weight: 600 !important;
     }
   }
@@ -51,7 +74,7 @@ html.dark {
   .page-title,
   .section-title,
   .card-title {
-    color: #ffffff !important;
+    color: #f1f5f9 !important;
     font-weight: 600 !important;
   }
   
@@ -59,68 +82,68 @@ html.dark {
   .el-button {
     // 主要按钮
     &.el-button--primary {
-      --el-button-text-color: #ffffff;
+      --el-button-text-color: #f1f5f9;
       --el-button-bg-color: var(--el-color-primary);
       --el-button-border-color: var(--el-color-primary);
-      --el-button-hover-text-color: #ffffff;
+      --el-button-hover-text-color: #f1f5f9;
       --el-button-hover-bg-color: var(--el-color-primary-light-3);
       --el-button-hover-border-color: var(--el-color-primary-light-3);
-      --el-button-active-text-color: #ffffff;
+      --el-button-active-text-color: #f1f5f9;
       --el-button-active-bg-color: var(--el-color-primary-dark-2);
       --el-button-active-border-color: var(--el-color-primary-dark-2);
       
-      color: #ffffff !important;
+      color: #f1f5f9 !important;
       
       &:hover {
-        color: #ffffff !important;
+        color: #f1f5f9 !important;
       }
       
       &:active {
-        color: #ffffff !important;
+        color: #f1f5f9 !important;
       }
     }
     
     // 成功按钮
     &.el-button--success {
-      --el-button-text-color: #ffffff;
-      color: #ffffff !important;
+      --el-button-text-color: #f1f5f9;
+      color: #f1f5f9 !important;
       
       &:hover,
       &:active {
-        color: #ffffff !important;
+        color: #f1f5f9 !important;
       }
     }
     
     // 警告按钮
     &.el-button--warning {
-      --el-button-text-color: #ffffff;
-      color: #ffffff !important;
+      --el-button-text-color: #f1f5f9;
+      color: #f1f5f9 !important;
       
       &:hover,
       &:active {
-        color: #ffffff !important;
+        color: #f1f5f9 !important;
       }
     }
     
     // 危险按钮
     &.el-button--danger {
-      --el-button-text-color: #ffffff;
-      color: #ffffff !important;
+      --el-button-text-color: #f1f5f9;
+      color: #f1f5f9 !important;
       
       &:hover,
       &:active {
-        color: #ffffff !important;
+        color: #f1f5f9 !important;
       }
     }
     
     // 信息按钮
     &.el-button--info {
-      --el-button-text-color: #ffffff;
-      color: #ffffff !important;
+      --el-button-text-color: #f1f5f9;
+      color: #f1f5f9 !important;
       
       &:hover,
       &:active {
-        color: #ffffff !important;
+        color: #f1f5f9 !important;
       }
     }
     
@@ -174,7 +197,7 @@ html.dark {
       
       &.is-active {
         .el-radio-button__inner {
-          color: #ffffff !important;
+          color: #f1f5f9 !important;
           background-color: var(--el-color-primary);
           border-color: var(--el-color-primary);
         }
@@ -217,14 +240,14 @@ html.dark {
     .el-card__header {
       background-color: var(--el-bg-color);
       border-bottom-color: var(--el-border-color-light);
-      color: #ffffff !important;
+      color: #f1f5f9 !important;
       font-weight: 600;
 
       // 卡片标题
       h1, h2, h3, h4, h5, h6,
       .card-title,
       .el-card__title {
-        color: #ffffff !important;
+        color: #f1f5f9 !important;
         font-weight: 600 !important;
       }
     }
@@ -262,7 +285,8 @@ html.dark {
       box-shadow: 0 0 0 1px var(--el-border-color) inset;
       
       .el-input__inner {
-        color: var(--el-text-color-primary);
+        color: var(--el-text-color-primary) !important;
+        -webkit-text-fill-color: var(--el-text-color-primary) !important;
         
         &::placeholder {
           color: var(--el-text-color-placeholder);
@@ -275,8 +299,31 @@ html.dark {
         background-color: var(--el-fill-color-light);
         
         .el-input__inner {
-          color: var(--el-text-color-placeholder);
+          color: var(--el-text-color-placeholder) !important;
+          -webkit-text-fill-color: var(--el-text-color-placeholder) !important;
         }
+      }
+    }
+  }
+  
+  // 优化文本域
+  .el-textarea {
+    .el-textarea__inner {
+      background-color: var(--el-fill-color-blank);
+      box-shadow: 0 0 0 1px var(--el-border-color) inset;
+      color: var(--el-text-color-primary) !important;
+      -webkit-text-fill-color: var(--el-text-color-primary) !important;
+      
+      &::placeholder {
+        color: var(--el-text-color-placeholder);
+      }
+    }
+
+    &.is-disabled {
+      .el-textarea__inner {
+        background-color: var(--el-fill-color-light);
+        color: var(--el-text-color-placeholder) !important;
+        -webkit-text-fill-color: var(--el-text-color-placeholder) !important;
       }
     }
   }
@@ -366,7 +413,7 @@ html.dark {
 
     .el-dialog__header {
       .el-dialog__title {
-        color: #ffffff !important;
+        color: #f1f5f9 !important;
         font-weight: 600 !important;
         font-size: 18px !important;
       }
@@ -376,7 +423,7 @@ html.dark {
       color: var(--el-text-color-primary);
 
       h1, h2, h3, h4, h5, h6 {
-        color: #ffffff !important;
+        color: #f1f5f9 !important;
         font-weight: 600 !important;
       }
     }
@@ -387,12 +434,12 @@ html.dark {
     background-color: var(--el-bg-color);
 
     .el-drawer__header {
-      color: #ffffff !important;
+      color: #f1f5f9 !important;
       font-weight: 600 !important;
       font-size: 18px !important;
 
       .el-drawer__title {
-        color: #ffffff !important;
+        color: #f1f5f9 !important;
         font-weight: 600 !important;
       }
     }
@@ -401,7 +448,7 @@ html.dark {
       color: var(--el-text-color-primary);
 
       h1, h2, h3, h4, h5, h6 {
-        color: #ffffff !important;
+        color: #f1f5f9 !important;
         font-weight: 600 !important;
       }
     }
@@ -411,7 +458,7 @@ html.dark {
   .el-descriptions {
     .el-descriptions__header {
       .el-descriptions__title {
-        color: #ffffff !important;
+        color: #f1f5f9 !important;
         font-weight: 600 !important;
       }
     }
@@ -430,7 +477,7 @@ html.dark {
     border-color: var(--el-border-color-light);
 
     .el-collapse-item__header {
-      color: #ffffff !important;
+      color: #f1f5f9 !important;
       font-weight: 600 !important;
       background-color: var(--el-fill-color-light);
       border-bottom-color: var(--el-border-color-light);
@@ -465,7 +512,7 @@ html.dark {
     }
 
     .el-timeline-item__title {
-      color: #ffffff !important;
+      color: #f1f5f9 !important;
       font-weight: 600 !important;
     }
 
@@ -477,7 +524,7 @@ html.dark {
   // 优化结果组件
   .el-result {
     .el-result__title {
-      color: #ffffff !important;
+      color: #f1f5f9 !important;
       font-weight: 600 !important;
     }
 
@@ -497,7 +544,7 @@ html.dark {
   .analysis-page {
     .title-section {
       .page-title {
-        color: #ffffff !important;
+        color: #f1f5f9 !important;
       }
 
       .page-description {
@@ -508,13 +555,13 @@ html.dark {
     .analysis-container {
       .form-section {
         .section-title {
-          color: #ffffff !important;
+          color: #f1f5f9 !important;
           border-bottom-color: var(--el-border-color) !important;
         }
       }
 
       .step-title {
-        color: #ffffff !important;
+        color: #f1f5f9 !important;
       }
 
       .step-description {
@@ -523,7 +570,7 @@ html.dark {
 
       .report-title,
       .report-name {
-        color: #ffffff !important;
+        color: #f1f5f9 !important;
       }
 
       .report-description {
@@ -535,7 +582,7 @@ html.dark {
   // 优化设置页面标题
   .settings-page {
     .page-title {
-      color: #ffffff !important;
+      color: #f1f5f9 !important;
     }
 
     .page-description {
@@ -546,11 +593,11 @@ html.dark {
   // 优化仪表盘页面标题
   .dashboard-page {
     .page-title {
-      color: #ffffff !important;
+      color: #f1f5f9 !important;
     }
 
     .section-title {
-      color: #ffffff !important;
+      color: #f1f5f9 !important;
     }
   }
 
@@ -560,7 +607,7 @@ html.dark {
     .page-title,
     .section-title,
     .card-title {
-      color: #ffffff !important;
+      color: #f1f5f9 !important;
       font-weight: 600 !important;
     }
 
@@ -577,7 +624,7 @@ html.dark {
     .page-title,
     .section-title,
     h1, h2, h3, h4, h5, h6 {
-      color: #ffffff !important;
+      color: #f1f5f9 !important;
     }
   }
 
@@ -588,13 +635,13 @@ html.dark {
     .framework-info,
     .contact-card {
       h3, h4 {
-        color: #ffffff !important;
+        color: #f1f5f9 !important;
       }
 
       .tech-name,
       .name,
       p {
-        color: #ffffff !important;
+        color: #f1f5f9 !important;
       }
 
       .tech-desc,
@@ -654,21 +701,21 @@ html.dark {
     .metrics-content {
       .metric-item {
         .metric-label {
-          color: #ffffff !important;
+          color: #f1f5f9 !important;
         }
 
         .recommendation-value {
-          color: #ffffff !important;
+          color: #f1f5f9 !important;
         }
 
         .confidence-label {
-          color: #ffffff !important;
+          color: #f1f5f9 !important;
         }
 
         .confidence-text {
           .confidence-number,
           .confidence-unit {
-            color: #ffffff !important;
+            color: #f1f5f9 !important;
           }
         }
 
@@ -683,11 +730,11 @@ html.dark {
 
       .key-points {
         h4 {
-          color: #ffffff !important;
+          color: #f1f5f9 !important;
         }
 
         li {
-          color: #ffffff !important;
+          color: #f1f5f9 !important;
         }
       }
     }
@@ -702,7 +749,7 @@ html.dark {
       }
 
       .page-title {
-        color: #ffffff !important;
+        color: #f1f5f9 !important;
       }
 
       .page-description {
@@ -720,7 +767,7 @@ html.dark {
       }
 
       .page-title {
-        color: #ffffff !important;
+        color: #f1f5f9 !important;
       }
 
       .page-description {

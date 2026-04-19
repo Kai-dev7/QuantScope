@@ -45,6 +45,7 @@ class AnalysisParameters(BaseModel):
     research_depth: str = "标准"  # 默认使用3级标准分析（推荐）
     selected_analysts: List[str] = Field(default_factory=lambda: ["market", "fundamentals", "news", "social"])
     custom_prompt: Optional[str] = None
+    planner_enabled: bool = True
     include_sentiment: bool = True
     include_risk: bool = True
     language: str = "zh-CN"

@@ -24,6 +24,7 @@ export interface AnalysisParameters {
   research_depth: '快速' | '基础' | '标准' | '深度' | '全面'
   selected_analysts: string[]
   custom_prompt?: string
+  planner_enabled?: boolean
   include_charts: boolean
   language: 'zh-CN' | 'en-US'
 }

@@ -722,20 +722,23 @@ class TradingAgentsGraph:
 
             # 获取厂家配置中的 API Key 和 base_url
             provider_name = self.config['llm_provider']
+            custom_api_key = self.config.get("quick_api_key") or self.config.get("deep_api_key")
 
-            # 尝试从环境变量获取 API Key（支持多种命名格式）
-            api_key_candidates = [
-                f"{provider_name.upper()}_API_KEY",  # 例如: KYX_API_KEY
-                f"{provider_name}_API_KEY",          # 例如: kyx_API_KEY
-                "CUSTOM_OPENAI_API_KEY"              # 通用环境变量
-            ]
+            if custom_api_key:
+                logger.info(f"✅ 从数据库配置获取到 {provider_name} API Key")
+            else:
+                # 尝试从环境变量获取 API Key（支持多种命名格式）
+                api_key_candidates = [
+                    f"{provider_name.upper()}_API_KEY",  # 例如: MINMAX_API_KEY
+                    f"{provider_name}_API_KEY",          # 例如: minmax_API_KEY
+                    "CUSTOM_OPENAI_API_KEY"              # 通用环境变量
+                ]
 
-            custom_api_key = None
-            for env_var in api_key_candidates:
-                custom_api_key = os.getenv(env_var)
-                if custom_api_key:
-                    logger.info(f"✅ 从环境变量 {env_var} 获取到 API Key")
-                    break
+                for env_var in api_key_candidates:
+                    custom_api_key = os.getenv(env_var)
+                    if custom_api_key:
+                        logger.info(f"✅ 从环境变量 {env_var} 获取到 API Key")
+                        break
 
             if not custom_api_key:
                 raise ValueError(
@@ -878,7 +881,15 @@ class TradingAgentsGraph:
             ],
         }
 
-    def propagate(self, company_name, trade_date, progress_callback=None, task_id=None):
+    def propagate(
+        self,
+        company_name,
+        trade_date,
+        progress_callback=None,
+        task_id=None,
+        planner_plan=None,
+        focus_hint=None,
+    ):
         """Run the trading agents graph for a company on a specific date.
 
         Args:
@@ -892,9 +903,19 @@ class TradingAgentsGraph:
             trade_date,
             progress_callback=progress_callback,
             task_id=task_id,
+            planner_plan=planner_plan,
+            focus_hint=focus_hint,
         )
 
-    def _propagate_agentscope(self, company_name, trade_date, progress_callback=None, task_id=None):
+    def _propagate_agentscope(
+        self,
+        company_name,
+        trade_date,
+        progress_callback=None,
+        task_id=None,
+        planner_plan=None,
+        focus_hint=None,
+    ):
         """Run the trading agents flow using AgentScope."""
         logger.debug(f"🔍 [AGENTSCOPE] ===== TradingAgentsGraph._propagate_agentscope 接收参数 =====")
         logger.debug(f"🔍 [AGENTSCOPE] company_name: '{company_name}' (类型: {type(company_name)})")
@@ -904,7 +925,11 @@ class TradingAgentsGraph:
         self.ticker = company_name
 
         init_agent_state = self.propagator.create_initial_state(
-            company_name, trade_date, session_id=task_id
+            company_name,
+            trade_date,
+            session_id=task_id,
+            planner_plan=planner_plan,
+            focus_hint=focus_hint,
         )
 
         node_timings = {}
@@ -1224,6 +1249,8 @@ class TradingAgentsGraph:
         self.log_states_dict[str(trade_date)] = {
             "company_of_interest": final_state["company_of_interest"],
             "trade_date": final_state["trade_date"],
+            "planner_plan": final_state.get("planner_plan", {}),
+            "focus_hint": final_state.get("focus_hint", ""),
             "market_report": final_state["market_report"],
             "sentiment_report": final_state["sentiment_report"],
             "news_report": final_state["news_report"],

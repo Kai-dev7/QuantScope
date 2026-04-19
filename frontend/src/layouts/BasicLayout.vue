@@ -138,10 +138,7 @@ watch(() => route.fullPath, () => {
 <style lang="scss" scoped>
 .basic-layout {
   min-height: 100vh;
-  background:
-    radial-gradient(circle at 12% 8%, rgba(27, 138, 150, 0.08), transparent 28%),
-    radial-gradient(circle at 92% 4%, rgba(219, 140, 77, 0.12), transparent 26%),
-    #f5f8fb;
+  background-color: var(--el-bg-color-page);
 }
 
 .sidebar-overlay {
@@ -156,8 +153,9 @@ watch(() => route.fullPath, () => {
   top: 0;
   left: 0;
   height: 100vh;
-  background: linear-gradient(185deg, #0f2338 0%, #102943 42%, #102f3f 100%);
-  border-right: 1px solid rgba(255, 255, 255, 0.1);
+  background-color: var(--app-sidebar-bg);
+  border-right: 1px solid rgba(171, 199, 222, 0.08);
+  box-shadow: 18px 0 46px rgba(6, 14, 24, 0.22);
   transition: width 0.3s ease;
   z-index: 1000;
   display: flex;
@@ -168,20 +166,21 @@ watch(() => route.fullPath, () => {
   }
 
   .sidebar-header {
-    height: 74px;
+    height: 82px;
     display: flex;
     align-items: center;
-    padding: 0 16px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 0 18px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 
     .logo {
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 14px;
 
       img {
-        width: 32px;
-        height: 32px;
+        width: 38px;
+        height: 38px;
+        filter: drop-shadow(0 8px 18px rgba(10, 117, 129, 0.24));
       }
 
       .brand-meta {
@@ -190,19 +189,19 @@ watch(() => route.fullPath, () => {
       }
 
       .logo-text {
-        font-size: 18px;
+        font-size: 17px;
         font-weight: 800;
         color: #f8fbff;
         white-space: nowrap;
-        letter-spacing: 0.03em;
-        text-transform: uppercase;
+        letter-spacing: 0.02em;
       }
 
       .logo-subtext {
-        font-size: 11px;
-        color: rgba(226, 238, 252, 0.82);
+        font-size: 10px;
+        color: rgba(202, 221, 243, 0.72);
         margin-top: 2px;
-        letter-spacing: 0.08em;
+        letter-spacing: 0.10em;
+        text-transform: uppercase;
       }
     }
   }
@@ -227,14 +226,14 @@ watch(() => route.fullPath, () => {
 }
 
 .header {
-  height: 60px;
+  height: 72px;
   background: var(--app-header-bg);
   border-bottom: 1px solid var(--app-header-border);
-  backdrop-filter: blur(10px);
+  backdrop-filter: blur(18px);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 24px;
+  padding: 0 28px;
   position: sticky;
   top: 0;
   z-index: 999;
@@ -247,19 +246,24 @@ watch(() => route.fullPath, () => {
     .header-title-wrap {
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 12px;
     }
 
     .header-title {
       font-size: 12px;
-      color: #6d7c90;
-      padding-left: 10px;
-      border-left: 1px solid #d8e3ee;
-      letter-spacing: 0.02em;
+      color: #6e7f90;
+      padding-left: 12px;
+      border-left: 1px solid rgba(154, 176, 196, 0.56);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
     }
 
     .sidebar-toggle {
-      padding: 8px;
+      width: 42px;
+      height: 42px;
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.64);
+      border: 1px solid rgba(132, 156, 182, 0.20);
       
       .el-icon {
         font-size: 18px;
@@ -280,41 +284,41 @@ watch(() => route.fullPath, () => {
   }
 
   .status-chip {
-    height: 30px;
-    padding: 0 12px;
+    height: 32px;
+    padding: 0 13px;
     border-radius: 999px;
     display: inline-flex;
     align-items: center;
     font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.08em;
-    color: #2f4c5d;
-    background: rgba(18, 96, 124, 0.08);
-    border: 1px solid rgba(18, 96, 124, 0.16);
+    color: #284254;
+    background: rgba(255, 255, 255, 0.66);
+    border: 1px solid rgba(90, 120, 145, 0.14);
   }
 
   .status-chip.live {
-    color: #0b6955;
-    border-color: rgba(11, 105, 85, 0.25);
-    background: rgba(24, 179, 135, 0.14);
+    color: #0d705a;
+    border-color: rgba(15, 159, 110, 0.22);
+    background: rgba(15, 159, 110, 0.12);
   }
 }
 
 .main-content {
   flex: 1;
-  padding: 24px;
-  min-height: calc(100vh - 60px - 60px); // 减去header和footer高度
+  padding: 28px;
+  min-height: calc(100vh - 72px - 58px);
 
   .content-wrapper {
-    max-width: 1400px;
+    max-width: 1520px;
     margin: 0 auto;
   }
 }
 
 .footer {
-  height: 60px;
-  background-color: var(--el-bg-color);
-  border-top: 1px solid var(--el-border-color-light);
+  height: 58px;
+  background: rgba(246, 249, 251, 0.72);
+  border-top: 1px solid rgba(126, 148, 168, 0.10);
   display: flex;
   align-items: center;
   justify-content: center;

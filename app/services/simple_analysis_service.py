@@ -28,6 +28,7 @@ from app.models.analysis import (AnalysisParameters, AnalysisStatus,
 from app.models.notification import NotificationCreate
 from app.models.user import PyObjectId
 from app.services.config_service import ConfigService
+from app.services.planner_service import planner_service
 from app.services.memory_state_manager import (TaskStatus,
                                                get_memory_state_manager)
 from app.services.progress_log_handler import (register_analysis_tracker,
@@ -53,6 +54,14 @@ logger = logging.getLogger("app.services.simple_analysis_service")
 
 # 配置服务实例
 config_service = ConfigService()
+
+
+def _merge_custom_prompt(custom_prompt: Optional[str], planner_focus_hint: str) -> str:
+    if custom_prompt and planner_focus_hint:
+        return f"{custom_prompt.strip()}\n\n[Planner重点]\n{planner_focus_hint}"
+    if planner_focus_hint:
+        return f"[Planner重点]\n{planner_focus_hint}"
+    return custom_prompt or ""
 
 
 def _is_valid_api_key(api_key: Optional[str]) -> bool:
@@ -121,6 +130,32 @@ def get_provider_by_model_name_sync(model_name: str) -> str:
     """
     provider_info = get_provider_and_url_by_model_sync(model_name)
     return provider_info["provider"]
+
+
+def _get_active_model_names_sync() -> set[str]:
+    """读取当前激活配置里的启用模型，过滤前端缓存的旧默认值。"""
+    try:
+        from pymongo import MongoClient
+
+        from app.core.config import settings
+
+        client = MongoClient(settings.MONGO_URI)
+        db = client[settings.MONGO_DB]
+        doc = db.system_configs.find_one({"is_active": True}, sort=[("version", -1)])
+        client.close()
+
+        if not doc:
+            return set()
+
+        llm_configs = doc.get("llm_configs", []) or []
+        return {
+            cfg.get("model_name")
+            for cfg in llm_configs
+            if cfg.get("enabled", True) and cfg.get("model_name")
+        }
+    except Exception as e:
+        logger.warning(f"⚠️ 读取激活模型列表失败: {e}")
+        return set()
 
 
 def get_provider_and_url_by_model_sync(model_name: str) -> dict:
@@ -326,9 +361,19 @@ def _get_env_api_key_for_provider(provider: str) -> str:
         "302ai": "AI302_API_KEY",
     }
 
-    env_key_name = env_key_map.get(provider.lower())
+    normalized_provider = (provider or "").lower()
+    env_key_name = env_key_map.get(normalized_provider)
     if env_key_name:
         api_key = os.getenv(env_key_name)
+        if _is_valid_api_key(api_key):
+            return api_key
+
+    generic_candidates = [
+        f"{normalized_provider.upper()}_API_KEY",
+        "CUSTOM_OPENAI_API_KEY",
+    ]
+    for candidate in generic_candidates:
+        api_key = os.getenv(candidate)
         if _is_valid_api_key(api_key):
             return api_key
 
@@ -356,7 +401,7 @@ def _get_default_backend_url(provider: str) -> str:
         "302ai": "https://api.302.ai/v1",
     }
 
-    url = default_urls.get(provider, "https://dashscope.aliyuncs.com/compatible-mode/v1")
+    url = default_urls.get(provider, "https://api.openai.com/v1")
     logger.info(f"🔧 [默认URL] {provider} -> {url}")
     return url
 
@@ -407,7 +452,7 @@ def _get_default_provider_by_model(model_name: str) -> str:
         'chatglm3-6b': 'zhipu'
     }
 
-    provider = model_provider_map.get(model_name, 'dashscope')  # 默认使用阿里百炼
+    provider = model_provider_map.get(model_name, 'custom_openai')  # 未知模型默认走 OpenAI 兼容厂家
     logger.info(f"🔧 使用默认映射: {model_name} -> {provider}")
     return provider
 
@@ -790,6 +835,21 @@ class SimpleAnalysisService:
             logger.info(f"📝 创建分析任务: {task_id} - {stock_code}")
             logger.info(f"🔍 内存管理器实例ID: {id(self.memory_manager)}")
 
+            planner_result = None
+            if request.parameters and getattr(request.parameters, "planner_enabled", True):
+                planner_result = planner_service.plan(
+                    symbol=stock_code,
+                    user_goal=getattr(request.parameters, "custom_prompt", None),
+                    selected_analysts=request.parameters.selected_analysts,
+                    research_depth=request.parameters.research_depth,
+                )
+                request.parameters.selected_analysts = planner_result.analysts
+                request.parameters.research_depth = planner_result.depth
+                request.parameters.custom_prompt = _merge_custom_prompt(
+                    getattr(request.parameters, "custom_prompt", None),
+                    planner_result.focus_hint,
+                )
+
             # 在内存中创建任务状态
             task_state = await self.memory_manager.create_task(
                 task_id=task_id,
@@ -825,6 +885,7 @@ class SimpleAnalysisService:
                         "status": "pending",
                         "progress": 0,
                         "created_at": datetime.utcnow(),
+                        "planner_plan": planner_result.to_dict() if planner_result else {},
                     }},
                     upsert=True
                 )
@@ -844,7 +905,8 @@ class SimpleAnalysisService:
             return {
                 "task_id": task_id,
                 "status": "pending",
-                "message": "任务已创建，等待执行"
+                "message": "任务已创建，等待执行",
+                "planner_plan": planner_result.to_dict() if planner_result else None,
             }
 
         except Exception as e:
@@ -1049,9 +1111,9 @@ class SimpleAnalysisService:
                     payload=NotificationCreate(
                         user_id=str(user_id),
                         type='analysis',
-                        title=f"{request.stock_code} 分析完成",
+                        title=f"{request.get_symbol()} 分析完成",
                         content=summary,
-                        link=f"/stocks/{request.stock_code}",
+                        link=f"/stocks/{request.get_symbol()}",
                         source='analysis'
                     )
                 )
@@ -1119,7 +1181,7 @@ class SimpleAnalysisService:
         # 🔧 使用共享线程池，支持多个任务并发执行
         # 不再每次创建新的线程池，避免串行执行
         loop = asyncio.get_event_loop()
-        logger.info(f"🚀 [线程池] 提交分析任务到共享线程池: {task_id} - {request.stock_code}")
+        logger.info(f"🚀 [线程池] 提交分析任务到共享线程池: {task_id} - {request.get_symbol()}")
         result = await loop.run_in_executor(
             self._thread_pool,  # 使用共享线程池
             self._run_analysis_sync,
@@ -1146,8 +1208,8 @@ class SimpleAnalysisService:
             init_logging()
             thread_logger = get_logger('analysis_thread')
 
-            thread_logger.info(f"🔄 [线程池] 开始执行分析: {task_id} - {request.stock_code}")
-            logger.info(f"🔄 [线程池] 开始执行分析: {task_id} - {request.stock_code}")
+            thread_logger.info(f"🔄 [线程池] 开始执行分析: {task_id} - {request.get_symbol()}")
+            logger.info(f"🔄 [线程池] 开始执行分析: {task_id} - {request.get_symbol()}")
 
             # 🔧 根据 RedisProgressTracker 的步骤权重计算准确的进度
             # 基础准备阶段 (10%): 0.03 + 0.02 + 0.01 + 0.02 + 0.02 = 0.10
@@ -1231,6 +1293,17 @@ class SimpleAnalysisService:
 
                 logger.info(f"📝 [分析服务] 用户指定模型: quick={quick_model}, deep={deep_model}")
 
+                active_model_names = _get_active_model_names_sync()
+                if active_model_names and (quick_model not in active_model_names or deep_model not in active_model_names):
+                    logger.warning(
+                        f"⚠️ [分析服务] 请求中的模型未在当前激活配置中启用: "
+                        f"quick={quick_model}, deep={deep_model}, active={sorted(active_model_names)}"
+                    )
+                    quick_model, deep_model = capability_service.recommend_models_for_depth(
+                        research_depth
+                    )
+                    logger.info(f"✅ 已替换为当前可用模型: quick={quick_model}, deep={deep_model}")
+
                 # 验证模型是否合适
                 validation = capability_service.validate_model_pair(
                     quick_model, deep_model, research_depth
@@ -1284,6 +1357,23 @@ class SimpleAnalysisService:
             market_type = request.parameters.market_type if request.parameters else "A股"
             logger.info(f"📊 [市场类型] 使用市场类型: {market_type}")
 
+            planner_result = None
+            if request.parameters and getattr(request.parameters, "planner_enabled", True):
+                update_progress_sync(8, "🧭 生成动态分析计划", "planner")
+                planner_result = planner_service.plan(
+                    symbol=request.get_symbol(),
+                    user_goal=getattr(request.parameters, "custom_prompt", None),
+                    selected_analysts=request.parameters.selected_analysts,
+                    research_depth=research_depth,
+                )
+                request.parameters.selected_analysts = planner_result.analysts
+                request.parameters.research_depth = planner_result.depth
+                research_depth = planner_result.depth
+                request.parameters.custom_prompt = _merge_custom_prompt(
+                    getattr(request.parameters, "custom_prompt", None),
+                    planner_result.focus_hint,
+                )
+
             # 创建分析配置（支持混合模式）
             config = create_analysis_config(
                 research_depth=research_depth,
@@ -1300,6 +1390,9 @@ class SimpleAnalysisService:
             config["quick_backend_url"] = quick_backend_url
             config["deep_backend_url"] = deep_backend_url
             config["backend_url"] = quick_backend_url  # 保持向后兼容
+            if planner_result:
+                config["planner_plan"] = planner_result.to_dict()
+                config["focus_hint"] = planner_result.focus_hint
 
             # 🔍 验证配置中的模型
             logger.info(f"🔍 [模型验证] 配置中的快速模型: {config.get('quick_think_llm')}")
@@ -1554,10 +1647,12 @@ class SimpleAnalysisService:
 
             # 执行实际分析，传递进度回调和task_id
             state, decision = trading_graph.propagate(
-                request.stock_code,
+                request.get_symbol(),
                 analysis_date,
                 progress_callback=graph_progress_callback,
-                task_id=task_id
+                task_id=task_id,
+                planner_plan=config.get("planner_plan"),
+                focus_hint=config.get("focus_hint"),
             )
 
             logger.info(f"✅ trading_graph.propagate 执行完成")
@@ -1824,7 +1919,7 @@ class SimpleAnalysisService:
 
             # 5. 最后的备用方案
             if not summary:
-                summary = f"对{request.stock_code}的分析已完成，请查看详细报告。"
+                summary = f"对{request.get_symbol()}的分析已完成，请查看详细报告。"
                 logger.warning(f"⚠️ [SUMMARY] 使用备用摘要")
 
             if not recommendation:
@@ -1837,8 +1932,8 @@ class SimpleAnalysisService:
             # 构建结果
             result = {
                 "analysis_id": str(uuid.uuid4()),
-                "stock_code": request.stock_code,
-                "stock_symbol": request.stock_code,  # 添加stock_symbol字段以保持兼容性
+                "stock_code": request.get_symbol(),
+                "stock_symbol": request.get_symbol(),  # 添加stock_symbol字段以保持兼容性
                 "analysis_date": analysis_date,
                 "summary": summary,
                 "recommendation": recommendation,
@@ -1859,7 +1954,9 @@ class SimpleAnalysisService:
                 # 🔥 添加模型信息字段
                 "model_info": model_info,
                 # 🆕 性能指标数据
-                "performance_metrics": state.get("performance_metrics", {}) if isinstance(state, dict) else {}
+                "performance_metrics": state.get("performance_metrics", {}) if isinstance(state, dict) else {},
+                "planner_plan": planner_result.to_dict() if planner_result else state.get("planner_plan", {}) if isinstance(state, dict) else {},
+                "focus_hint": planner_result.focus_hint if planner_result else state.get("focus_hint", "") if isinstance(state, dict) else "",
             }
 
             logger.info(f"✅ [线程池] 分析完成: {task_id} - 耗时{execution_time:.2f}秒")
@@ -2657,6 +2754,8 @@ class SimpleAnalysisService:
 
                 # 报告内容
                 "reports": reports,
+                "planner_plan": result.get("planner_plan", {}),
+                "focus_hint": result.get("focus_hint", ""),
 
                 # 🔥 关键修复：添加格式化后的decision字段！
                 "decision": result.get("decision", {}),

@@ -50,6 +50,8 @@ class AgentState(TypedDict):
     messages: Annotated[Sequence[Any], "Conversation messages"]
     company_of_interest: Annotated[str, "Company that we are interested in trading"]
     trade_date: Annotated[str, "What date we are trading at"]
+    planner_plan: Annotated[dict, "Structured plan generated before analyst execution"]
+    focus_hint: Annotated[str, "Planner-generated focus hint injected into downstream prompts"]
 
     sender: Annotated[str, "Agent that sent this message"]
 

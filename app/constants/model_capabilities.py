@@ -10,8 +10,8 @@
 - 系统会自动映射到原厂模型的能力配置
 """
 
-from enum import IntEnum, Enum
-from typing import Dict, List, Any, Tuple
+from enum import Enum, IntEnum
+from typing import Any, Dict, List, Tuple
 
 
 class ModelCapabilityLevel(IntEnum):
@@ -244,6 +244,14 @@ DEFAULT_MODEL_CAPABILITIES: Dict[str, Dict[str, Any]] = {
         "recommended_depths": ["标准", "深度", "全面"],
         "performance_metrics": {"speed": 3, "cost": 2, "quality": 5},
         "description": "智谱GLM-4 Plus，旗舰版本"
+    },
+    "glm-5": {
+        "capability_level": 5,
+        "suitable_roles": [ModelRole.BOTH],
+        "features": [ModelFeature.TOOL_CALLING, ModelFeature.LONG_CONTEXT, ModelFeature.REASONING],
+        "recommended_depths": ["标准", "深度", "全面"],
+        "performance_metrics": {"speed": 3, "cost": 2, "quality": 5},
+        "description": "智谱GLM-5，旗舰版本"
     },
     
     # ==================== Anthropic Claude ====================

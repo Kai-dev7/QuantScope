@@ -29,6 +29,7 @@ export interface SingleAnalysisRequest {
     research_depth?: string
     selected_analysts?: string[]
     custom_prompt?: string
+    planner_enabled?: boolean
     include_sentiment?: boolean
     include_risk?: boolean
     language?: string
@@ -106,6 +107,17 @@ export interface AnalysisResult {
 
   created_at: string
   updated_at: string
+}
+
+export interface ExtractedStockResult {
+  stock_name: string
+  stock_code: string
+  market: 'CN' | 'HK' | 'US' | ''
+  confidence: number
+  reason: string
+  matched: boolean
+  provider?: string
+  model?: string
 }
 
 export interface AnalysisHistory {
@@ -253,6 +265,10 @@ export const analysisApi = {
     return request.get('/api/analysis/search', {
       params: { query, market }
     })
+  },
+
+  extractStockFromPrompt(prompt: string): Promise<ApiResponse<ExtractedStockResult>> {
+    return request.post('/api/analysis/extract-stock', { prompt })
   },
 
   // 获取热门股票
@@ -476,7 +492,5 @@ export const getStockPlaceholder = (market: string): string => {
   }
   return placeholders[market] ?? '输入股票代码'
 }
-
-
 
 

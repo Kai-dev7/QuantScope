@@ -126,26 +126,41 @@ const activeMenu = computed(() => route.path)
   border: none;
   height: 100%;
   background: transparent;
+  padding: 10px 10px 18px;
 
   :deep(.el-menu-item),
   :deep(.el-sub-menu__title) {
-    height: 48px;
-    line-height: 48px;
-    color: rgba(232, 242, 255, 0.82);
-    margin: 4px 8px;
-    border-radius: 10px;
+    height: 50px;
+    line-height: 50px;
+    color: rgba(229, 239, 250, 0.76);
+    margin: 4px 0;
+    border-radius: 14px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
   }
 
   :deep(.el-menu-item:hover),
   :deep(.el-sub-menu__title:hover) {
-    background: rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.06);
     color: #ffffff;
   }
 
   :deep(.el-menu-item.is-active) {
-    background: linear-gradient(90deg, rgba(18, 156, 168, 0.22), rgba(100, 196, 184, 0.14));
+    background: linear-gradient(90deg, rgba(15, 118, 110, 0.26), rgba(29, 78, 216, 0.22));
     color: #ffffff;
-    border: 1px solid rgba(141, 223, 224, 0.24);
+    border: 1px solid rgba(133, 190, 230, 0.18);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  }
+
+  :deep(.el-sub-menu .el-menu-item) {
+    margin-left: 8px;
+    color: rgba(205, 221, 238, 0.74);
+  }
+
+  :deep(.el-menu-item .el-icon),
+  :deep(.el-sub-menu__title .el-icon) {
+    font-size: 18px;
+    margin-right: 10px;
   }
 }
 </style>

@@ -53,6 +53,16 @@ class UnifiedStockService:
             }
         }
 
+    @staticmethod
+    def _sanitize_mongo_doc(doc: Optional[Dict]) -> Optional[Dict]:
+        """清理 Mongo 文档中 FastAPI/Pydantic 无法直接序列化的字段。"""
+        if not doc:
+            return doc
+
+        sanitized = dict(doc)
+        sanitized.pop("_id", None)
+        return sanitized
+
     async def get_stock_info(
         self, 
         market: str, 
@@ -97,7 +107,7 @@ class UnifiedStockService:
                 if doc:
                     logger.debug(f"✅ 使用默认数据源（兼容模式）")
         
-        return doc
+        return self._sanitize_mongo_doc(doc)
 
     async def _get_source_priority(self, market: str) -> List[str]:
         """
@@ -214,7 +224,9 @@ class UnifiedStockService:
                     pass
         
         # 返回前 limit 条
-        result_list = list(unique_results.values())[:limit]
+        result_list = [
+            self._sanitize_mongo_doc(doc) for doc in list(unique_results.values())[:limit]
+        ]
         logger.info(f"🔍 搜索 {market} 市场: '{query}' -> {len(result_list)} 条结果（已去重）")
         return result_list
 
@@ -283,4 +295,3 @@ class UnifiedStockService:
                 "timezone": "America/New_York"
             }
         ]
-

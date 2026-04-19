@@ -17,6 +17,7 @@ from app.services.queue_service import get_queue_service, QueueService
 from app.services.analysis_service import get_analysis_service
 from app.services.simple_analysis_service import get_simple_analysis_service
 from app.services.websocket_manager import get_websocket_manager
+from app.services.stock_extraction_service import stock_extraction_service
 from app.models.analysis import (
     SingleAnalysisRequest, BatchAnalysisRequest, AnalysisParameters,
     AnalysisTaskResponse, AnalysisBatchResponse, AnalysisHistoryQuery
@@ -35,6 +36,29 @@ class BatchAnalyzeRequest(BaseModel):
     parameters: dict = Field(default_factory=dict)
     title: str = Field(default="批量分析", description="批次标题")
     description: Optional[str] = Field(None, description="批次描述")
+
+
+class StockExtractRequest(BaseModel):
+    prompt: str = Field(..., description="用户输入的分析目标描述")
+
+
+@router.post("/extract-stock", response_model=Dict[str, Any])
+async def extract_stock_from_prompt(
+    request: StockExtractRequest,
+    user: dict = Depends(get_current_user),
+):
+    """从自然语言目标中提取股票名称/代码。"""
+    try:
+        logger.info("🧠 提取股票请求: user=%s prompt=%s", user.get("username"), request.prompt)
+        result = await stock_extraction_service.extract_from_prompt(request.prompt)
+        return {
+            "success": True,
+            "data": result,
+            "message": "股票提取完成"
+        }
+    except Exception as e:
+        logger.error("❌ 提取股票失败: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 # 新版API端点
 @router.post("/single", response_model=Dict[str, Any])

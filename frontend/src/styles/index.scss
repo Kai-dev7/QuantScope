@@ -1,4 +1,5 @@
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Sora:wght@500;600;700;800&display=swap');
+@import './variables.scss';
 
 * {
   box-sizing: border-box;
@@ -8,28 +9,40 @@ html,
 body {
   margin: 0;
   padding: 0;
-  font-family: 'IBM Plex Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
-  color: #0f2030;
-  background:
-    radial-gradient(circle at 8% 12%, rgba(24, 192, 198, 0.18), transparent 36%),
-    radial-gradient(circle at 90% 6%, rgba(241, 117, 53, 0.2), transparent 28%),
-    linear-gradient(160deg, #edf4fa 0%, #f7fafd 52%, #eef4fa 100%);
+  font-family: $font-sans;
+  color: $color-text-primary;
+  background-color: var(--el-bg-color-page);
   line-height: 1.5;
 }
 
 :root {
-  --el-color-primary: #0e839b;
-  --el-color-success: #15946c;
-  --el-color-warning: #d17a28;
-  --el-color-danger: #cd3f52;
-  --el-color-info: #5d7084;
-  --el-border-radius-base: 14px;
-  --el-box-shadow-lighter: 0 16px 40px rgba(12, 44, 64, 0.11);
-  --app-title-font: 'Sora', 'IBM Plex Sans', sans-serif;
-  --app-panel-bg: rgba(255, 255, 255, 0.88);
-  --app-panel-border: rgba(133, 170, 196, 0.35);
-  --app-header-bg: rgba(246, 250, 253, 0.84);
-  --app-header-border: rgba(20, 56, 78, 0.14);
+  --el-color-primary: #{$color-brand};
+  --el-color-success: #{$color-success};
+  --el-color-warning: #{$color-brand-warm};
+  --el-color-danger: #{$color-danger};
+  --el-color-info: #{$color-text-secondary};
+  --el-bg-color-page: #{$color-bg-canvas};
+  --el-bg-color: #{$color-bg-panel-strong};
+  --el-text-color-primary: #{$color-text-primary};
+  --el-text-color-regular: #{$color-text-secondary};
+  --el-text-color-secondary: #{$color-text-muted};
+  --el-border-color: #{$color-border-soft};
+  --el-border-color-light: rgba(104, 132, 158, 0.12);
+  --el-border-radius-base: #{$radius-sm};
+  --el-border-radius-round: 999px;
+  --el-box-shadow-lighter: #{$shadow-md};
+  --app-title-font: #{$font-display};
+  --app-panel-bg: #{$color-bg-panel};
+  --app-panel-bg-strong: #{$color-bg-panel-strong};
+  --app-panel-border: #{$color-border-soft};
+  --app-panel-border-strong: #{$color-border-strong};
+  --app-header-bg: #{$color-bg-header};
+  --app-header-border: rgba(38, 56, 76, 0.12);
+  --app-sidebar-bg: #{$color-bg-sidebar};
+  --app-sidebar-bg-alt: #{$color-bg-sidebar-alt};
+  --app-brand-accent: #{$color-brand-accent};
+  --app-success-soft: rgba(15, 159, 110, 0.12);
+  --app-warning-soft: rgba(201, 115, 40, 0.12);
 }
 
 #app {
@@ -43,38 +56,50 @@ h4,
 h5,
 h6 {
   margin-top: 0;
-  color: #102437;
+  color: $color-text-primary;
   font-family: var(--app-title-font);
   letter-spacing: -0.015em;
 }
 
 .el-card {
-  border-radius: 18px;
+  border-radius: $radius-md;
   border: 1px solid var(--app-panel-border);
-  box-shadow: var(--el-box-shadow-lighter);
+  box-shadow: $shadow-sm;
   background: var(--app-panel-bg);
-  backdrop-filter: blur(10px);
+  backdrop-filter: blur(18px);
 }
 
 .el-card__header {
-  border-bottom: 1px solid rgba(33, 76, 109, 0.12);
+  border-bottom: 1px solid rgba(33, 76, 109, 0.08);
 }
 
 .el-button {
-  border-radius: 14px;
+  border-radius: 12px;
   font-weight: 600;
   letter-spacing: 0.01em;
 }
 
 .el-button--primary {
-  box-shadow: 0 10px 24px rgba(13, 130, 151, 0.24);
+  background: linear-gradient(135deg, $color-brand 0%, $color-brand-accent 100%);
+  border: none;
+  box-shadow: 0 14px 30px rgba(14, 83, 120, 0.20);
 }
 
 .el-input__wrapper,
 .el-select__wrapper,
 .el-textarea__inner {
   border-radius: 12px;
-  box-shadow: 0 0 0 1px rgba(62, 101, 130, 0.12) inset;
+  background: var(--el-bg-color);
+  box-shadow: 0 0 0 1px var(--el-border-color) inset;
+  color: var(--el-text-color-primary);
+}
+
+.el-input__wrapper.is-focus,
+.el-select__wrapper.is-focused,
+.el-textarea__inner:focus {
+  box-shadow:
+    0 0 0 1px rgba(15, 118, 110, 0.20) inset,
+    0 0 0 4px rgba(15, 118, 110, 0.08);
 }
 
 .el-tag {
@@ -88,8 +113,8 @@ h6 {
 }
 
 .el-table th.el-table__cell {
-  background: #f1f6fb;
-  color: #1c3a53;
+  background: #edf3f6;
+  color: #21384c;
   font-weight: 700;
 }
 
@@ -104,9 +129,17 @@ h6 {
 .page-title,
 .section-title,
 .card-title {
-  color: #12293e !important;
+  color: $color-text-primary !important;
   font-family: var(--app-title-font);
   font-weight: 700 !important;
+}
+
+.el-alert {
+  border-radius: 14px;
+}
+
+.el-drawer {
+  background: rgba(248, 250, 252, 0.96);
 }
 
 .text-center {

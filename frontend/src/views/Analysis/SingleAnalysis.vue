@@ -100,13 +100,23 @@
               <!-- 分析深度 -->
               <div class="form-section">
                 <h4 class="section-title">🎯 分析深度</h4>
+                <el-alert
+                  v-if="analysisForm.plannerEnabled"
+                  title="已开启自动规划，分析深度将由 Planner 根据目标描述自动决定"
+                  type="info"
+                  :closable="false"
+                  style="margin-bottom: 12px"
+                />
                 <div class="depth-selector">
                   <div
                     v-for="(depth, index) in depthOptions"
                     :key="index"
                     class="depth-option"
-                    :class="{ active: analysisForm.researchDepth === index + 1 }"
-                    @click="analysisForm.researchDepth = index + 1"
+                    :class="{
+                      active: !analysisForm.plannerEnabled && analysisForm.researchDepth === index + 1,
+                      disabled: analysisForm.plannerEnabled
+                    }"
+                    @click="!analysisForm.plannerEnabled && (analysisForm.researchDepth = index + 1)"
                   >
                     <div class="depth-icon">{{ depth.icon }}</div>
                     <div class="depth-info">
@@ -121,13 +131,25 @@
               <!-- 分析师团队 -->
               <div class="form-section">
                 <h4 class="section-title">👥 分析师团队</h4>
+                <el-alert
+                  v-if="analysisForm.plannerEnabled"
+                  title="已开启自动规划，分析师团队将由 Planner 自动选择"
+                  type="success"
+                  :closable="false"
+                  style="margin-bottom: 12px"
+                >
+                  <template #default>
+                    <span>当前会根据你的分析目标自动路由到合适的分析师，无需手动勾选。</span>
+                  </template>
+                </el-alert>
                 <div class="analysts-grid">
                   <div
                     v-for="analyst in ANALYSTS"
                     :key="analyst.id"
                     class="analyst-card"
                     :class="{ 
-                      active: analysisForm.selectedAnalysts.includes(analyst.name),
+                      active: !analysisForm.plannerEnabled && analysisForm.selectedAnalysts.includes(analyst.name),
+                      planned: analysisForm.plannerEnabled && plannerCandidateAnalysts.includes(analyst.name),
                       disabled: analyst.name === '社媒分析师' && analysisForm.market === 'A股'
                     }"
                     @click="toggleAnalyst(analyst.name)"
@@ -142,7 +164,10 @@
                       <div class="analyst-desc">{{ analyst.description }}</div>
                     </div>
                     <div class="analyst-check">
-                      <el-icon v-if="analysisForm.selectedAnalysts.includes(analyst.name)" class="check-icon">
+                      <el-icon
+                        v-if="(!analysisForm.plannerEnabled && analysisForm.selectedAnalysts.includes(analyst.name)) || (analysisForm.plannerEnabled && plannerCandidateAnalysts.includes(analyst.name))"
+                        class="check-icon"
+                      >
                         <Check />
                       </el-icon>
                     </div>
@@ -159,6 +184,21 @@
                 />
               </div>
 
+              <div class="form-section">
+                <h4 class="section-title">🧭 分析目标</h4>
+                <el-form-item label="目标描述">
+                  <el-input
+                    v-model="analysisForm.customPrompt"
+                    type="textarea"
+                    :rows="4"
+                    resize="vertical"
+                    maxlength="300"
+                    show-word-limit
+                    placeholder="例如：分析贵州茅台，关注近期财报影响；重点看营收、利润和经销商库存变化"
+                  />
+                </el-form-item>
+              </div>
+
 
 
               <!-- 操作按钮 -->
@@ -170,7 +210,6 @@
                     size="large"
                     @click="submitAnalysis"
                     :loading="submitting"
-                    :disabled="!analysisForm.stockCode.trim()"
                     class="submit-btn large-analysis-btn"
                     style="width: 280px; height: 56px; font-size: 18px; font-weight: 700; border-radius: 16px;"
                   >
@@ -446,6 +485,14 @@
                 <div class="option-list">
                   <div class="option-item">
                     <div class="option-info">
+                      <span class="option-name">自动规划</span>
+                      <span class="option-desc">先由 Planner 自动选择分析师并注入重点</span>
+                    </div>
+                    <el-switch v-model="analysisForm.plannerEnabled" />
+                  </div>
+
+                  <div class="option-item">
+                    <div class="option-info">
                       <span class="option-name">情绪分析</span>
                       <span class="option-desc">分析市场情绪和投资者心理</span>
                     </div>
@@ -570,6 +617,54 @@
                           <span style="font-size: 13px;">💡 以上分析基于AI模型对历史数据的处理，不构成投资建议，请结合自身情况独立决策。</span>
                         </template>
                       </el-alert>
+                    </div>
+                  </div>
+                </div>
+
+                <div
+                  v-if="analysisResults.planner_plan || analysisResults.focus_hint"
+                  class="planner-section"
+                >
+                  <h4>🧭 Planner 计划</h4>
+                  <div class="planner-card">
+                    <div class="planner-grid">
+                      <div class="planner-item">
+                        <span class="planner-label">分析师路由</span>
+                        <div class="planner-tags">
+                          <el-tag
+                            v-for="analyst in getPlannerAnalysts(analysisResults.planner_plan)"
+                            :key="analyst"
+                            type="info"
+                            effect="plain"
+                          >
+                            {{ analyst }}
+                          </el-tag>
+                        </div>
+                      </div>
+                      <div class="planner-item">
+                        <span class="planner-label">规划深度</span>
+                        <span class="planner-value">{{ analysisResults.planner_plan?.depth || '-' }}</span>
+                      </div>
+                    </div>
+
+                    <div v-if="analysisResults.focus_hint || analysisResults.planner_plan?.focus_hint" class="planner-focus">
+                      <h5>重点提示</h5>
+                      <p>{{ analysisResults.focus_hint || analysisResults.planner_plan?.focus_hint }}</p>
+                    </div>
+
+                    <div
+                      v-if="analysisResults.planner_plan?.reasoning?.length"
+                      class="planner-reasoning"
+                    >
+                      <h5>规划依据</h5>
+                      <ul>
+                        <li
+                          v-for="(reason, index) in analysisResults.planner_plan.reasoning"
+                          :key="index"
+                        >
+                          {{ reason }}
+                        </li>
+                      </ul>
                     </div>
                   </div>
                 </div>
@@ -708,6 +803,7 @@ import {
 import { analysisApi, type SingleAnalysisRequest } from '@/api/analysis'
 import { paperApi } from '@/api/paper'
 import { stocksApi } from '@/api/stocks'
+import { searchStocks as searchMultiMarketStocks, type StockInfo as MultiMarketStockInfo } from '@/api/multiMarket'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import { configApi } from '@/api/config'
@@ -735,6 +831,8 @@ interface AnalysisForm {
   analysisDate: Date
   researchDepth: number
   selectedAnalysts: string[]
+  customPrompt: string
+  plannerEnabled: boolean
   includeSentiment: boolean
   includeRisk: boolean
   language: 'zh-CN' | 'en-US'
@@ -808,6 +906,8 @@ const analysisForm = reactive<AnalysisForm>({
   analysisDate: new Date(),
   researchDepth: 3, // 默认选中3级标准分析（推荐），将在 onMounted 中从用户偏好加载
   selectedAnalysts: ['市场分析师', '基本面分析师'], // 将在 onMounted 中从用户偏好加载
+  customPrompt: '',
+  plannerEnabled: true,
   includeSentiment: true,
   includeRisk: true,
   language: 'zh-CN'
@@ -816,6 +916,41 @@ const analysisForm = reactive<AnalysisForm>({
 // 股票代码验证相关
 const stockCodeError = ref<string>('')
 const stockCodeHelp = ref<string>('')
+
+const plannerKeywordAnalystMap: Array<{ analyst: string; keywords: string[] }> = [
+  { analyst: '基本面分析师', keywords: ['财报', '业绩', '估值', '盈利', '利润', '营收', '毛利', '现金流', '资产负债', 'roe', 'pe', 'pb', '基本面', '分红', '库存'] },
+  { analyst: '新闻分析师', keywords: ['新闻', '公告', '政策', '事件', '舆情', '催化', '财报影响', '业绩预告', '监管', '并购', '合作', '订单', '研报'] },
+  { analyst: '社媒分析师', keywords: ['社交', '情绪', '社区', '股吧', '微博', '热度', '讨论', '舆论', '散户情绪'] },
+  { analyst: '市场分析师', keywords: ['技术', '走势', '价格', '量价', '资金', '趋势', '交易', '动量', '波动', '市场', '短线', '筹码'] }
+]
+
+const plannerCandidateAnalysts = computed(() => {
+  if (!analysisForm.plannerEnabled) {
+    return analysisForm.selectedAnalysts
+  }
+
+  const goal = analysisForm.customPrompt.trim().toLowerCase()
+  const analysts = new Set<string>(['市场分析师', '基本面分析师'])
+
+  plannerKeywordAnalystMap.forEach(({ analyst, keywords }) => {
+    if (keywords.some(keyword => goal.includes(keyword))) {
+      if (!(analyst === '社媒分析师' && analysisForm.market === 'A股')) {
+        analysts.add(analyst)
+      }
+    }
+  })
+
+  if (
+    ['财报', '公告', '业绩', '政策', '新闻', '事件'].some(term => goal.includes(term)) &&
+    !plannerKeywordAnalystMap.find(item => item.analyst === '社媒分析师')?.keywords.some(term => goal.includes(term))
+  ) {
+    analysts.delete('社媒分析师')
+  }
+
+  return ANALYSTS
+    .map(analyst => analyst.name)
+    .filter(name => analysts.has(name))
+})
 
 // 深度选项（5个级别，基于实际测试数据更新）
 const depthOptions = [
@@ -891,8 +1026,237 @@ const fetchStockInfo = () => {
   // TODO: 实现股票信息获取
 }
 
+const detectMarketBySymbol = (symbol: string): 'A股' | '港股' | '美股' | null => {
+  if (/^\d{6}$/.test(symbol)) {
+    return 'A股'
+  }
+  if (/^\d{1,5}$/.test(symbol)) {
+    return '港股'
+  }
+  if (/^[A-Za-z]{1,5}$/.test(symbol)) {
+    return '美股'
+  }
+  return null
+}
+
+const extractSymbolCandidateFromPrompt = (prompt: string): string | null => {
+  const text = prompt.trim()
+  if (!text) {
+    return null
+  }
+
+  const directCodeMatch = text.match(/\b([A-Za-z]{1,5}|\d{1,6})\b/)
+  if (directCodeMatch?.[1]) {
+    return directCodeMatch[1]
+  }
+
+  return null
+}
+
+const STOCK_NAME_STOP_WORDS = [
+  '近期', '最近', '今天', '当前', '财报', '业绩', '估值', '影响', '走势', '公告', '新闻',
+  '研报', '风险', '机会', '表现', '情况', '预期', '逻辑', '怎么看', '怎么样', '如何',
+  '分析', '研究', '关注', '看看', '一下', '一波', '这个', '这只', '个股', '股票', '公司'
+]
+
+const trimCandidateSuffix = (text: string): string => {
+  let result = text.trim()
+
+  for (const word of STOCK_NAME_STOP_WORDS) {
+    const suffixPattern = new RegExp(`${word}.*$`)
+    result = result.replace(suffixPattern, '').trim()
+  }
+
+  return result.replace(/[，。；,.;：:！!？?].*$/, '').trim()
+}
+
+const sanitizePromptForSearch = (prompt: string): string => {
+  return prompt
+    .replace(/[（(【\[].*?[)）】\]]/g, ' ')
+    .replace(/[，。；、,.;:：!！?？]/g, ' ')
+    .replace(/\b(请|帮我|想|我想|看看|分析|研究|关注|一下|一波|这个|这只|个股|股票|公司|近期|最近|今天|当前|财报|业绩|估值|影响|走势|公告|新闻|研报|风险|机会|表现|情况|预期|逻辑|怎么看|怎么样|如何)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+const extractNameCandidatesFromPrompt = (prompt: string): string[] => {
+  const text = prompt.trim()
+  if (!text) {
+    return []
+  }
+
+  const patterns = [
+    /分析([\u4e00-\u9fa5A-Za-z·\-.]{2,30})/,
+    /看([\u4e00-\u9fa5A-Za-z·\-.]{2,30})/,
+    /研究([\u4e00-\u9fa5A-Za-z·\-.]{2,30})/,
+    /关注([\u4e00-\u9fa5A-Za-z·\-.]{2,30})/,
+    /([\u4e00-\u9fa5A-Za-z·\-.]{2,30})股票/,
+    /([\u4e00-\u9fa5A-Za-z·\-.]{2,30})这只/,
+    /([\u4e00-\u9fa5A-Za-z·\-.]{2,30})个股/,
+    /([\u4e00-\u9fa5A-Za-z·\-.]{2,30})公司/
+  ]
+
+  const candidates: string[] = []
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern)
+    if (match?.[1]) {
+      const cleaned = trimCandidateSuffix(match[1])
+      if (cleaned.length >= 2) {
+        candidates.push(cleaned)
+      }
+    }
+  }
+
+  const chineseChunks = text.match(/[\u4e00-\u9fa5]{2,12}/g) || []
+  chineseChunks.forEach(chunk => {
+    const cleaned = trimCandidateSuffix(chunk)
+    if (cleaned.length >= 2) {
+      candidates.push(cleaned)
+    }
+  })
+
+  const sanitizedPrompt = sanitizePromptForSearch(text)
+  if (sanitizedPrompt.length >= 2) {
+    candidates.push(sanitizedPrompt)
+    sanitizedPrompt.split(/\s+/).forEach(part => {
+      const cleaned = trimCandidateSuffix(part)
+      if (cleaned.length >= 2) {
+        candidates.push(cleaned)
+      }
+    })
+  }
+
+  return Array.from(new Set(candidates))
+    .filter(candidate => candidate.length >= 2)
+    .sort((a, b) => a.length - b.length)
+}
+
+const normalizeDetectedStock = (stock: MultiMarketStockInfo) => {
+  const marketMap: Record<string, MarketType> = {
+    CN: 'A股',
+    HK: '港股',
+    US: '美股'
+  }
+
+  return {
+    symbol: stock.market === 'HK' ? stock.code.padStart(5, '0') : stock.code.toUpperCase(),
+    market: marketMap[stock.market] || 'A股'
+  }
+}
+
+const normalizeMarketCodeToLabel = (market: string): MarketType | null => {
+  const mapping: Record<string, MarketType> = {
+    CN: 'A股',
+    HK: '港股',
+    US: '美股'
+  }
+  return mapping[market] || null
+}
+
+const tryResolveStockFromPrompt = async (): Promise<boolean> => {
+  const prompt = analysisForm.customPrompt.trim()
+  if (!prompt) {
+    return false
+  }
+
+  try {
+    const extractionResponse = await analysisApi.extractStockFromPrompt(prompt)
+    const extracted = extractionResponse.data
+    if (extracted?.matched) {
+      const normalizedMarket = normalizeMarketCodeToLabel(extracted.market)
+      if (extracted.stock_code) {
+        const detectedMarket = normalizedMarket || detectMarketBySymbol(extracted.stock_code)
+        if (detectedMarket) {
+          analysisForm.stockCode = detectedMarket === '港股'
+            ? extracted.stock_code.padStart(5, '0')
+            : extracted.stock_code.toUpperCase()
+          analysisForm.market = detectedMarket
+          validateStockCodeInput()
+          ElMessage.success(`模型已识别股票代码：${analysisForm.stockCode}`)
+          return true
+        }
+      }
+
+      if (extracted.stock_name) {
+        const marketCandidates = normalizedMarket ? [extracted.market] : ['CN', 'HK', 'US']
+        for (const market of marketCandidates) {
+          try {
+            const response = await searchMultiMarketStocks(market, extracted.stock_name, 5)
+            const stocks = response.data?.stocks || []
+            if (stocks.length > 0) {
+              const exactMatch = stocks.find(stock => stock.name === extracted.stock_name)
+              const bestMatch = exactMatch || stocks[0]
+              const resolved = normalizeDetectedStock(bestMatch)
+              analysisForm.stockCode = resolved.symbol
+              analysisForm.market = resolved.market
+              validateStockCodeInput()
+              ElMessage.success(`模型已识别股票：${bestMatch.name}（${analysisForm.stockCode}）`)
+              return true
+            }
+          } catch (error) {
+            console.warn(`模型提取后在 ${market} 市场搜索股票失败`, error)
+          }
+        }
+      }
+    }
+  } catch (error) {
+    console.warn('调用模型提取股票失败，回退规则识别', error)
+  }
+
+  const symbolCandidate = extractSymbolCandidateFromPrompt(prompt)
+  if (symbolCandidate) {
+    const detectedMarket = detectMarketBySymbol(symbolCandidate)
+    if (detectedMarket) {
+      analysisForm.stockCode = detectedMarket === '港股'
+        ? symbolCandidate.padStart(5, '0')
+        : symbolCandidate.toUpperCase()
+      analysisForm.market = detectedMarket
+      validateStockCodeInput()
+      ElMessage.success(`已从目标描述中识别股票代码：${analysisForm.stockCode}`)
+      return true
+    }
+  }
+
+  const nameCandidates = extractNameCandidatesFromPrompt(prompt)
+  if (nameCandidates.length === 0) {
+    return false
+  }
+
+  const markets = ['CN', 'HK', 'US']
+  for (const candidate of nameCandidates) {
+    for (const market of markets) {
+      try {
+        const response = await searchMultiMarketStocks(market, candidate, 5)
+        const stocks = response.data?.stocks || []
+        if (stocks.length > 0) {
+          const exactMatch = stocks.find(stock =>
+            stock.name === candidate ||
+            stock.code.toUpperCase() === candidate.toUpperCase()
+          )
+          const bestMatch = exactMatch || stocks[0]
+          const resolved = normalizeDetectedStock(bestMatch)
+          analysisForm.stockCode = resolved.symbol
+          analysisForm.market = resolved.market
+          validateStockCodeInput()
+          ElMessage.success(`已从目标描述中识别股票：${bestMatch.name}（${analysisForm.stockCode}）`)
+          return true
+        }
+      } catch (error) {
+        console.warn(`从 ${market} 市场搜索股票失败`, error)
+      }
+    }
+  }
+
+  return false
+}
+
 // 切换分析师
 const toggleAnalyst = (analystName: string) => {
+  if (analysisForm.plannerEnabled) {
+    return
+  }
+
   if (analystName === '社媒分析师' && analysisForm.market === 'A股') {
     return
   }
@@ -907,9 +1271,16 @@ const toggleAnalyst = (analystName: string) => {
 
 // 提交分析
 const submitAnalysis = async () => {
-  const stockCode = analysisForm.stockCode.trim()
+  let stockCode = analysisForm.stockCode.trim()
+  if (!stockCode && analysisForm.customPrompt.trim()) {
+    const resolved = await tryResolveStockFromPrompt()
+    if (resolved) {
+      stockCode = analysisForm.stockCode.trim()
+    }
+  }
+
   if (!stockCode) {
-    ElMessage.warning('请输入股票代码')
+    ElMessage.warning('请输入股票代码，或在分析目标中写明股票名称/代码')
     return
   }
 
@@ -924,7 +1295,7 @@ const submitAnalysis = async () => {
   // 使用标准化后的代码
   analysisForm.symbol = validation.normalizedCode || stockCode.toUpperCase()
 
-  if (analysisForm.selectedAnalysts.length === 0) {
+  if (!analysisForm.plannerEnabled && analysisForm.selectedAnalysts.length === 0) {
     ElMessage.warning('请至少选择一个分析师')
     return
   }
@@ -943,8 +1314,10 @@ const submitAnalysis = async () => {
       parameters: {
         market_type: analysisForm.market,
         analysis_date: analysisDate.toISOString().split('T')[0],
-        research_depth: getDepthDescription(analysisForm.researchDepth),
-        selected_analysts: convertAnalystNamesToIds(analysisForm.selectedAnalysts),
+        research_depth: analysisForm.plannerEnabled ? undefined : getDepthDescription(analysisForm.researchDepth),
+        selected_analysts: analysisForm.plannerEnabled ? undefined : convertAnalystNamesToIds(analysisForm.selectedAnalysts),
+        custom_prompt: analysisForm.customPrompt?.trim() || undefined,
+        planner_enabled: analysisForm.plannerEnabled,
         include_sentiment: analysisForm.includeSentiment,
         include_risk: analysisForm.includeRisk,
         language: analysisForm.language,
@@ -1018,6 +1391,18 @@ const submitAnalysis = async () => {
   } finally {
     submitting.value = false
   }
+}
+
+const plannerAnalystNameMap: Record<string, string> = {
+  market: '市场分析师',
+  fundamentals: '基本面分析师',
+  news: '新闻分析师',
+  social: '社媒分析师'
+}
+
+const getPlannerAnalysts = (plannerPlan: any): string[] => {
+  const analysts = Array.isArray(plannerPlan?.analysts) ? plannerPlan.analysts : []
+  return analysts.map((item: string) => plannerAnalystNameMap[item] || item)
 }
 
 // 轮询任务状态
@@ -2252,52 +2637,70 @@ onMounted(async () => {
 <style lang="scss" scoped>
 .single-analysis {
   min-height: 100vh;
-  background: var(--el-bg-color-page);
-  padding: 24px;
+  padding: 10px 0 28px;
 
   .page-header {
-    margin-bottom: 32px;
+    margin-bottom: 24px;
 
     .header-content {
-      background: var(--el-bg-color);
-      padding: 32px;
-      border-radius: 16px;
-      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+      background:
+        linear-gradient(135deg, rgba(247, 250, 252, 0.98) 0%, rgba(239, 247, 246, 0.96) 52%, rgba(244, 247, 252, 0.98) 100%);
+      padding: 32px 34px;
+      border-radius: 26px;
+      border: 1px solid rgba(126, 150, 171, 0.14);
+      box-shadow: 0 20px 44px rgba(17, 31, 45, 0.08);
+      position: relative;
+      overflow: hidden;
+
+      &::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background:
+          radial-gradient(circle at 16% 18%, rgba(27, 173, 162, 0.10), transparent 28%),
+          radial-gradient(circle at 88% 20%, rgba(201, 115, 40, 0.12), transparent 24%);
+        pointer-events: none;
+      }
     }
 
     .title-section {
+      position: relative;
+      z-index: 1;
+
       .page-title {
         display: flex;
         align-items: center;
-        font-size: 32px;
-        font-weight: 700;
-        color: #1a202c;
-        margin: 0 0 8px 0;
+        font-size: 34px;
+        font-weight: 800;
+        color: #132334;
+        margin: 0 0 10px 0;
 
         .title-icon {
-          margin-right: 12px;
-          color: #3b82f6;
+          margin-right: 14px;
+          color: #0f766e;
         }
       }
 
       .page-description {
-        font-size: 16px;
+        font-size: 15px;
         color: #64748b;
         margin: 0;
+        max-width: 620px;
       }
     }
   }
 
   .analysis-container {
     .main-form-card, .config-card {
-      border-radius: 16px;
-      border: none;
-      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+      border-radius: 24px;
+      border: 1px solid rgba(123, 149, 171, 0.14);
+      box-shadow: 0 20px 44px rgba(17, 31, 45, 0.08);
+      overflow: hidden;
 
       :deep(.el-card__header) {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        border-radius: 16px 16px 0 0;
+        background: linear-gradient(180deg, rgba(247, 250, 252, 0.96) 0%, rgba(241, 246, 249, 0.92) 100%);
+        color: #132334;
+        border-radius: 24px 24px 0 0;
         padding: 20px 24px;
 
         .card-header {
@@ -2326,12 +2729,14 @@ onMounted(async () => {
         flex-direction: column;
 
         .section-title {
-          font-size: 16px;
-          font-weight: 600;
-          color: #1a202c;
+          font-size: 14px;
+          font-weight: 700;
+          color: #21364a;
           margin: 0 0 16px 0;
-          padding-bottom: 8px;
-          border-bottom: 2px solid #e2e8f0;
+          padding-bottom: 10px;
+          border-bottom: 1px solid rgba(109, 136, 161, 0.16);
+          letter-spacing: 0.04em;
+          text-transform: uppercase;
         }
       }
 
@@ -2377,34 +2782,47 @@ onMounted(async () => {
       .depth-selector {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-        gap: 12px;
+        gap: 14px;
 
         .depth-option {
           display: flex;
           align-items: center;
-          padding: 16px;
-          border: 2px solid #e2e8f0;
-          border-radius: 12px;
+          padding: 18px;
+          border: 1px solid rgba(125, 148, 169, 0.18);
+          border-radius: 18px;
           cursor: pointer;
           transition: all 0.3s ease;
+          background: rgba(250, 252, 253, 0.88);
 
           &:hover {
-            border-color: #3b82f6;
+            border-color: rgba(15, 118, 110, 0.18);
             transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.15);
+            box-shadow: 0 16px 30px rgba(17, 31, 45, 0.08);
           }
 
           &.active {
-            border-color: #3b82f6;
-            background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
-            color: #1e40af;
+            border-color: rgba(15, 118, 110, 0.22);
+            background: linear-gradient(135deg, rgba(232, 248, 246, 0.98) 0%, rgba(234, 241, 252, 0.94) 100%);
+            color: #11354a;
             transform: translateY(-2px);
-            box-shadow: 0 8px 25px rgba(59, 130, 246, 0.15);
+            box-shadow: 0 18px 34px rgba(15, 118, 110, 0.12);
+          }
+
+          &.disabled {
+            cursor: default;
+            opacity: 0.7;
+            background: #f8fafc;
+
+            &:hover {
+              border-color: var(--el-border-color);
+              transform: none;
+              box-shadow: none;
+            }
           }
 
           .depth-icon {
-            font-size: 24px;
-            margin-right: 12px;
+            font-size: 26px;
+            margin-right: 14px;
           }
 
           .depth-info {
@@ -2415,13 +2833,13 @@ onMounted(async () => {
 
             .depth-desc {
               font-size: 12px;
-              opacity: 0.8;
+              color: #6b7c8d;
               margin-bottom: 2px;
             }
 
             .depth-time {
               font-size: 11px;
-              opacity: 0.7;
+              color: #8d99a7;
             }
           }
         }
@@ -2430,29 +2848,30 @@ onMounted(async () => {
       .analysts-grid {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-        gap: 16px;
+        gap: 14px;
 
         .analyst-card {
           display: flex;
           align-items: center;
-          padding: 16px;
-          border: 2px solid #e2e8f0;
-          border-radius: 12px;
+          padding: 18px;
+          border: 1px solid rgba(125, 148, 169, 0.18);
+          border-radius: 18px;
           cursor: pointer;
           transition: all 0.3s ease;
+          background: rgba(250, 252, 253, 0.9);
 
           &:hover {
-            border-color: #3b82f6;
+            border-color: rgba(15, 118, 110, 0.18);
             transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.15);
+            box-shadow: 0 16px 28px rgba(17, 31, 45, 0.08);
           }
 
           &.active {
-            border-color: #3b82f6;
-            background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
-            color: #1e40af;
+            border-color: rgba(15, 118, 110, 0.24);
+            background: linear-gradient(135deg, rgba(232, 248, 246, 0.98) 0%, rgba(235, 242, 252, 0.94) 100%);
+            color: #14364a;
             transform: translateY(-2px);
-            box-shadow: 0 8px 25px rgba(59, 130, 246, 0.15);
+            box-shadow: 0 18px 30px rgba(15, 118, 110, 0.12);
           }
 
           &.disabled {
@@ -2462,15 +2881,25 @@ onMounted(async () => {
             &:hover {
               transform: none;
               box-shadow: none;
-              border-color: #e2e8f0;
+              border-color: var(--el-border-color);
+            }
+          }
+
+          &.planned {
+            border-color: rgba(15, 159, 110, 0.24);
+            background: linear-gradient(135deg, rgba(237, 252, 245, 0.98) 0%, rgba(216, 247, 231, 0.94) 100%);
+            color: #0d5a45;
+
+            .analyst-check .check-icon {
+              color: #059669;
             }
           }
 
           .analyst-avatar {
-            width: 48px;
-            height: 48px;
+            width: 50px;
+            height: 50px;
             border-radius: 50%;
-            background: rgba(255, 255, 255, 0.2);
+            background: rgba(255, 255, 255, 0.7);
             display: flex;
             align-items: center;
             justify-content: center;
@@ -2483,24 +2912,24 @@ onMounted(async () => {
 
             .analyst-name {
               font-weight: 600;
-              margin-bottom: 4px;
+              margin-bottom: 5px;
             }
 
             .analyst-desc {
               font-size: 12px;
-              opacity: 0.8;
+              color: #738295;
             }
           }
 
           .analyst-check {
             .check-icon {
               font-size: 20px;
-              color: #3b82f6;
+              color: #0f766e;
             }
           }
 
           &.active .analyst-check .check-icon {
-            color: #1e40af;
+            color: #0b5f58;
           }
         }
       }
@@ -2513,12 +2942,14 @@ onMounted(async () => {
 
           .config-title {
             font-size: 14px;
-            font-weight: 600;
-            color: #1a202c;
+            font-weight: 700;
+            color: #1f3447;
             margin: 0 0 12px 0;
             display: flex;
             align-items: center;
             gap: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
           }
 
           .model-config {
@@ -2573,11 +3004,10 @@ onMounted(async () => {
           .custom-input {
             :deep(.el-textarea__inner) {
               border-radius: 8px;
-              border: 1px solid #d1d5db;
 
               &:focus {
-                border-color: #3b82f6;
-                box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+                border-color: var(--el-color-primary);
+                box-shadow: 0 0 0 1px var(--el-color-primary) inset !important;
               }
             }
           }
@@ -2601,24 +3031,24 @@ onMounted(async () => {
               height: 56px !important;
               font-size: 18px !important;
               font-weight: 700 !important;
-              background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%) !important;
+              background: linear-gradient(135deg, #0f766e 0%, #155e75 100%) !important;
               border: none !important;
               border-radius: 16px !important;
               transition: all 0.3s ease !important;
-              box-shadow: 0 4px 15px rgba(59, 130, 246, 0.2) !important;
+              box-shadow: 0 12px 24px rgba(15, 118, 110, 0.18) !important;
               min-width: 280px !important;
               max-width: 280px !important;
 
               &:hover {
                 transform: translateY(-3px) !important;
-                box-shadow: 0 12px 30px rgba(59, 130, 246, 0.4) !important;
-                background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%) !important;
+                box-shadow: 0 18px 34px rgba(15, 118, 110, 0.24) !important;
+                background: linear-gradient(135deg, #0f766e 0%, #155e75 100%) !important;
               }
 
               &:disabled {
                 opacity: 0.6 !important;
                 transform: none !important;
-                box-shadow: 0 4px 15px rgba(59, 130, 246, 0.1) !important;
+                box-shadow: 0 8px 16px rgba(15, 118, 110, 0.10) !important;
               }
 
               .el-icon {
@@ -2646,14 +3076,14 @@ onMounted(async () => {
         height: 48px;
         font-size: 16px;
         font-weight: 600;
-        background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+        background: linear-gradient(135deg, #0f766e 0%, #155e75 100%);
         border: none;
         border-radius: 12px;
         transition: all 0.3s ease;
 
         &:hover {
           transform: translateY(-2px);
-          box-shadow: 0 8px 25px rgba(59, 130, 246, 0.3);
+          box-shadow: 0 12px 26px rgba(15, 118, 110, 0.22);
         }
 
         &:disabled {
@@ -2667,14 +3097,92 @@ onMounted(async () => {
         height: 48px;
         font-size: 16px;
         border-radius: 12px;
-        border: 2px solid #e5e7eb;
+        border: 2px solid var(--el-border-color-light);
         color: #6b7280;
         transition: all 0.3s ease;
 
         &:hover {
-          border-color: #d1d5db;
+          border-color: var(--el-border-color);
           color: #374151;
           transform: translateY(-1px);
+        }
+      }
+    }
+
+    .planner-section {
+      margin-bottom: 24px;
+
+      h4 {
+        font-size: 18px;
+        font-weight: 700;
+        color: #1f2937;
+        margin: 0 0 16px 0;
+      }
+
+      .planner-card {
+        border: 1px solid rgba(15, 118, 110, 0.12);
+        background: linear-gradient(180deg, #f7fbfb 0%, #eef7f5 100%);
+        border-radius: 16px;
+        padding: 20px;
+      }
+
+      .planner-grid {
+        display: grid;
+        grid-template-columns: 1.4fr 0.8fr;
+        gap: 16px;
+        margin-bottom: 16px;
+      }
+
+      .planner-item {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      .planner-label {
+        font-size: 12px;
+        font-weight: 700;
+        color: #64748b;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
+      .planner-tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .planner-value {
+        font-size: 18px;
+        font-weight: 700;
+        color: #0f766e;
+      }
+
+      .planner-focus,
+      .planner-reasoning {
+        margin-top: 16px;
+        padding-top: 16px;
+        border-top: 1px solid rgba(59, 130, 246, 0.12);
+
+        h5 {
+          margin: 0 0 10px 0;
+          font-size: 14px;
+          font-weight: 700;
+          color: #0f4c5c;
+        }
+
+        p {
+          margin: 0;
+          line-height: 1.8;
+          color: #334155;
+        }
+
+        ul {
+          margin: 0;
+          padding-left: 18px;
+          color: #334155;
+          line-height: 1.8;
         }
       }
     }
@@ -2711,22 +3219,22 @@ onMounted(async () => {
   }
 
   &.step-current {
-    border-left-color: #3b82f6;
-    background: linear-gradient(90deg, rgba(59, 130, 246, 0.05) 0%, transparent 100%);
+    border-left-color: #0f766e;
+    background: linear-gradient(90deg, rgba(15, 118, 110, 0.06) 0%, transparent 100%);
 
     .step-icon {
-      background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+      background: linear-gradient(135deg, #0f766e 0%, #155e75 100%);
       color: white;
-      box-shadow: 0 2px 12px rgba(59, 130, 246, 0.4);
+      box-shadow: 0 2px 12px rgba(15, 118, 110, 0.28);
     }
 
     .step-title {
-      color: #3b82f6;
+      color: #0f766e;
       font-weight: 700;
     }
 
     .step-description {
-      color: #1d4ed8;
+      color: #155e75;
       font-weight: 500;
     }
   }
@@ -2827,25 +3335,25 @@ onMounted(async () => {
   height: 56px !important;
   font-size: 18px !important;
   font-weight: 700 !important;
-  background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%) !important;
+  background: linear-gradient(135deg, #0f766e 0%, #155e75 100%) !important;
   border: none !important;
   border-radius: 16px !important;
   transition: all 0.3s ease !important;
-  box-shadow: 0 4px 15px rgba(59, 130, 246, 0.2) !important;
+  box-shadow: 0 12px 24px rgba(15, 118, 110, 0.18) !important;
   min-width: 280px !important;
   max-width: 280px !important;
 }
 
 .large-analysis-btn.el-button:hover {
   transform: translateY(-3px) !important;
-  box-shadow: 0 12px 30px rgba(59, 130, 246, 0.4) !important;
-  background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%) !important;
+  box-shadow: 0 18px 34px rgba(15, 118, 110, 0.24) !important;
+  background: linear-gradient(135deg, #0f766e 0%, #155e75 100%) !important;
 }
 
 .large-analysis-btn.el-button:disabled {
   opacity: 0.6 !important;
   transform: none !important;
-  box-shadow: 0 4px 15px rgba(59, 130, 246, 0.1) !important;
+  box-shadow: 0 8px 16px rgba(15, 118, 110, 0.10) !important;
 }
 
 .large-analysis-btn.el-button .el-icon {
