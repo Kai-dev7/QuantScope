@@ -6,10 +6,12 @@ OpenAI兼容适配器基类
 import os
 import time
 from typing import Any, Dict, List, Optional, Union
+import httpx
 from langchain_core.messages import BaseMessage
 from langchain_core.outputs import ChatResult
 from langchain_openai import ChatOpenAI
 from langchain_core.callbacks import CallbackManagerForLLMRun
+from openai import APIConnectionError
 
 # 导入统一日志系统
 from tradingagents.utils.logging_init import setup_llm_logging
@@ -166,8 +168,25 @@ class OpenAICompatibleBase(ChatOpenAI):
         # 记录开始时间
         start_time = time.time()
         
-        # 调用父类生成方法
-        result = super()._generate(messages, stop, run_manager, **kwargs)
+        # 对偶发的网关断连做短重试，避免整条分析任务直接失败
+        retryable_errors = (httpx.RemoteProtocolError, APIConnectionError)
+        last_error = None
+        for attempt in range(3):
+            try:
+                result = super()._generate(messages, stop, run_manager, **kwargs)
+                break
+            except retryable_errors as e:
+                last_error = e
+                if attempt == 2:
+                    raise
+                wait_seconds = 1.5 * (attempt + 1)
+                logger.warning(
+                    f"⚠️ [{getattr(self, 'provider_name', 'unknown')}] LLM请求失败，"
+                    f"第 {attempt + 1} 次重试前等待 {wait_seconds:.1f}s: {e}"
+                )
+                time.sleep(wait_seconds)
+        if last_error and 'result' not in locals():
+            raise last_error
         
         # 记录token使用
         self._track_token_usage(result, kwargs, start_time)

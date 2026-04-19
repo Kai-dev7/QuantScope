@@ -16,6 +16,7 @@ from app.constants.model_capabilities import (ANALYSIS_DEPTH_REQUIREMENTS,
                                               ModelFeature, ModelRole)
 from app.core.config import settings
 from app.core.unified_config import unified_config
+from app.services.simple_analysis_service import get_provider_and_url_by_model_sync
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,15 @@ class ModelCapabilityService:
         except Exception as e:
             logger.warning(f"读取激活模型配置失败: {e}")
             return [], {}
+
+    def _has_valid_model_api_key(self, model_name: str) -> bool:
+        """过滤掉已启用但无有效 API Key 的模型。"""
+        try:
+            provider_info = get_provider_and_url_by_model_sync(model_name)
+            return bool(provider_info.get("api_key"))
+        except Exception as e:
+            logger.warning(f"检查模型 {model_name} 的 API Key 失败: {e}")
+            return False
 
     def _parse_aggregator_model_name(self, model_name: str) -> Tuple[Optional[str], str]:
         """
@@ -346,6 +356,10 @@ class ModelCapabilityService:
         requirements = ANALYSIS_DEPTH_REQUIREMENTS.get(research_depth, ANALYSIS_DEPTH_REQUIREMENTS["标准"])
         
         enabled_models, system_settings = self._get_active_db_model_configs()
+        enabled_models = [
+            cfg for cfg in enabled_models
+            if cfg.get("model_name") and self._has_valid_model_api_key(cfg.get("model_name"))
+        ]
 
         # 优先使用数据库系统设置中的默认模型，只要它们当前仍然启用
         configured_quick = system_settings.get("quick_analysis_model")
@@ -360,7 +374,10 @@ class ModelCapabilityService:
         if not enabled_models:
             try:
                 llm_configs = unified_config.get_llm_configs()
-                enabled_models = [c for c in llm_configs if c.enabled]
+                enabled_models = [
+                    c for c in llm_configs
+                    if c.enabled and getattr(c, "model_name", None) and self._has_valid_model_api_key(c.model_name)
+                ]
             except Exception as e:
                 logger.error(f"获取模型配置失败: {e}")
                 return self._get_default_models()
@@ -445,6 +462,10 @@ class ModelCapabilityService:
     def _get_default_models(self) -> Tuple[str, str]:
         """获取默认模型对"""
         enabled_models, system_settings = self._get_active_db_model_configs()
+        enabled_models = [
+            cfg for cfg in enabled_models
+            if cfg.get("model_name") and self._has_valid_model_api_key(cfg.get("model_name"))
+        ]
         enabled_model_names = {cfg.get("model_name") for cfg in enabled_models}
         quick_model = system_settings.get("quick_analysis_model")
         deep_model = system_settings.get("deep_analysis_model")

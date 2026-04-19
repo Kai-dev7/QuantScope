@@ -3319,7 +3319,7 @@ class ConfigService:
                 provider_data = await providers_collection.find_one({"name": provider_name})
                 base_url = provider_data.get("default_base_url") if provider_data else None
                 return await asyncio.get_event_loop().run_in_executor(
-                    None, self._test_openai_compatible_api, api_key, display_name, base_url, provider_name
+                    None, self._test_openai_compatible_api, api_key, display_name, base_url, provider_name, llm_config.model_name
                 )
             elif provider_name == "google":
                 # 获取厂家的 base_url
@@ -3356,7 +3356,7 @@ class ConfigService:
                     }
 
                 return await asyncio.get_event_loop().run_in_executor(
-                    None, self._test_openai_compatible_api, api_key, display_name, base_url, provider_name
+                    None, self._test_openai_compatible_api, api_key, display_name, base_url, provider_name, llm_config.model_name
                 )
         except Exception as e:
             return {
@@ -4230,7 +4230,7 @@ class ConfigService:
 
         return filtered
 
-    def _test_openai_compatible_api(self, api_key: str, display_name: str, base_url: str = None, provider_name: str = None) -> dict:
+    def _test_openai_compatible_api(self, api_key: str, display_name: str, base_url: str = None, provider_name: str = None, model_name: str = None) -> dict:
         """测试 OpenAI 兼容 API（用于聚合渠道和自定义厂家）"""
         try:
             import requests
@@ -4266,7 +4266,7 @@ class ConfigService:
             }
 
             # 🔥 根据不同厂家选择合适的测试模型
-            test_model = "gpt-3.5-turbo"  # 默认模型
+            test_model = model_name or "gpt-3.5-turbo"
             if provider_name == "siliconflow":
                 # 硅基流动使用免费的 Qwen 模型进行测试
                 test_model = "Qwen/Qwen2.5-7B-Instruct"
@@ -4277,7 +4277,7 @@ class ConfigService:
                 logger.info(f"🔍 智谱AI使用测试模型: {test_model}")
 
             # 使用一个通用的模型名称进行测试
-            # 聚合渠道通常支持多种模型，这里使用 gpt-3.5-turbo 作为测试
+            # 优先使用当前配置模型，避免对自定义厂家误测不存在的默认模型
             data = {
                 "model": test_model,
                 "messages": [
