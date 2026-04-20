@@ -3,6 +3,7 @@ import json
 
 # 导入统一日志系统
 from tradingagents.utils.logging_init import get_logger
+from tradingagents.agents.utils.judge_feedback import build_judge_feedback_block
 logger = get_logger("default")
 
 
@@ -15,6 +16,9 @@ def create_research_manager(llm, memory):
         fundamentals_report = state["fundamentals_report"]
 
         investment_debate_state = state["investment_debate_state"]
+        judge_feedback_block = build_judge_feedback_block(
+            state, "research_manager", "Research Manager"
+        )
 
         curr_situation = f"{market_research_report}\n\n{sentiment_report}\n\n{news_report}\n\n{fundamentals_report}"
 
@@ -65,7 +69,8 @@ def create_research_manager(llm, memory):
 辩论历史：
 {history}
 
-请用中文撰写所有分析内容和建议。"""
+请用中文撰写所有分析内容和建议。
+{judge_feedback_block}"""
 
         # 📊 统计 prompt 大小
         prompt_length = len(prompt)

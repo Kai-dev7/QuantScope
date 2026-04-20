@@ -18,6 +18,7 @@ from tradingagents.agents import (
     create_social_media_analyst,
     create_trader,
 )
+from .llm_judge import JUDGE_TARGETS, LLMJudge
 try:
     from agentscope.agent import AgentBase  # noqa: F401
 except Exception as exc:  # pragma: no cover - handled at runtime
@@ -126,6 +127,31 @@ class AgentScopeRunner:
         self.safe_analyst = create_safe_debator(self.quick_llm)
         self.neutral_analyst = create_neutral_debator(self.quick_llm)
         self.risk_manager = create_risk_manager(self.deep_llm, self.risk_manager_memory)
+        self.judge = None
+        if toolkit.config.get("llm_judge_enabled", True):
+            self.judge = LLMJudge(
+                self.deep_llm,
+                min_score=int(toolkit.config.get("llm_judge_min_score", 7)),
+            )
+
+    def _apply_judge_feedback(self, state: Dict[str, Any], node_name: str, feedback: Dict[str, Any]) -> Dict[str, Any]:
+        target = JUDGE_TARGETS.get(node_name)
+        if not target:
+            return state
+
+        feedback_map = dict(state.get("judge_feedback", {}) or {})
+        score_map = dict(state.get("judge_scores", {}) or {})
+        feedback_map[target["feedback_key"]] = feedback.get("feedback", "")
+        score_map[node_name] = {
+            "score": feedback.get("score", 0),
+            "passed": feedback.get("passed", False),
+            "missing_items": feedback.get("missing_items", []),
+        }
+
+        next_state = dict(state)
+        next_state["judge_feedback"] = feedback_map
+        next_state["judge_scores"] = score_map
+        return next_state
 
     def _sanitize_message_history(self, messages: List[Any]) -> List[Any]:
         """
@@ -236,13 +262,35 @@ class AgentScopeRunner:
             if send_progress and progress_sender:
                 progress_sender(node_name)
             start = time.time()
-            # 防御性清理：避免历史中残留非法 ToolMessage 影响下一次 LLM 调用
-            if "messages" in state:
-                state["messages"] = self._sanitize_message_history(state.get("messages", []))
-            agent = AgentScopeStateAgent(node_name, node_func)
-            # AgentScope Msg.content only accepts string/content blocks.
-            # Our workflow state is a rich dict, so pass state directly.
-            state = agent.reply(state)
+            max_attempts = 1 + int(self.toolkit.config.get("llm_judge_max_retries", 1))
+
+            for attempt in range(max_attempts):
+                # 防御性清理：避免历史中残留非法 ToolMessage 影响下一次 LLM 调用
+                if "messages" in state:
+                    state["messages"] = self._sanitize_message_history(state.get("messages", []))
+                agent = AgentScopeStateAgent(node_name, node_func)
+                updated_state = agent.reply(state)
+
+                if not self.judge or not self.judge.should_judge(node_name):
+                    state = updated_state
+                    break
+
+                judge_result = self.judge.evaluate(node_name, state, updated_state)
+                updated_state = self._apply_judge_feedback(updated_state, node_name, judge_result or {})
+
+                if judge_result and not judge_result.get("passed", True) and attempt < max_attempts - 1:
+                    from tradingagents.utils.logging_init import get_logger
+                    logger = get_logger("agents")
+                    logger.warning(
+                        f"⚠️ [LLM Judge] {node_name} 评分 {judge_result.get('score', 0)}/10，"
+                        f"触发重生成: {judge_result.get('feedback', '')}"
+                    )
+                    state = updated_state
+                    continue
+
+                state = updated_state
+                break
+
             node_timings[node_name] = time.time() - start
 
         def run_tool_node(node_name: str, tools: List[Any]):

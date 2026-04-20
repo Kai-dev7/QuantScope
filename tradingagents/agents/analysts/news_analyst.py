@@ -94,7 +94,6 @@ def create_news_analyst(llm, toolkit):
         
         company_name = _get_company_name(ticker, market_info)
         logger.info(f"[新闻分析师] 公司名称: {company_name}")
-        
         # 🔧 使用统一新闻工具，简化工具调用
         logger.info(f"[新闻分析师] 使用统一新闻工具，自动识别股票类型并获取相应新闻")
    # 创建统一新闻工具

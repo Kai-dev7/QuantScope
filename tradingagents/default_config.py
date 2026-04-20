@@ -13,6 +13,15 @@ DEFAULT_CONFIG = {
     "deep_think_llm": "o4-mini",
     "quick_think_llm": "gpt-4o-mini",
     "backend_url": "https://api.openai.com/v1",
+    # LLM-as-Judge settings
+    # 当前仅对 3 个高杠杆节点启用质量评审：
+    # 1. Research Manager
+    # 2. Trader
+    # 3. Risk Judge
+    # 这样可以在控制时延的同时，保留对汇总、执行和最终风控结果的质量闸门。
+    "llm_judge_enabled": True,
+    "llm_judge_min_score": 7,
+    "llm_judge_max_retries": 1,
     # Debate and discussion settings
     "max_debate_rounds": 1,
     "max_risk_discuss_rounds": 1,

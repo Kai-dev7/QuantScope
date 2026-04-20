@@ -52,6 +52,8 @@ class AgentState(TypedDict):
     trade_date: Annotated[str, "What date we are trading at"]
     planner_plan: Annotated[dict, "Structured plan generated before analyst execution"]
     focus_hint: Annotated[str, "Planner-generated focus hint injected into downstream prompts"]
+    judge_feedback: Annotated[dict, "LLM judge feedback keyed by node type"]
+    judge_scores: Annotated[dict, "LLM judge scores keyed by node name"]
 
     sender: Annotated[str, "Agent that sent this message"]
 

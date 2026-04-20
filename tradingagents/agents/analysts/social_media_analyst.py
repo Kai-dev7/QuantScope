@@ -107,7 +107,6 @@ def create_social_media_analyst(llm, toolkit):
         # 获取公司名称
         company_name = _get_company_name_for_social_media(ticker, market_info)
         logger.info(f"[社交媒体分析师] 公司名称: {company_name}")
-
         # 统一使用 get_stock_sentiment_unified 工具
         # 该工具内部会自动识别股票类型并调用相应的情绪数据源
         logger.info(f"[社交媒体分析师] 使用统一情绪分析工具，自动识别股票类型")

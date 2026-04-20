@@ -3,6 +3,7 @@ import json
 
 # 导入统一日志系统
 from tradingagents.utils.logging_init import get_logger
+from tradingagents.agents.utils.judge_feedback import build_judge_feedback_block
 logger = get_logger("default")
 
 
@@ -18,6 +19,9 @@ def create_risk_manager(llm, memory):
         fundamentals_report = state["news_report"]
         sentiment_report = state["sentiment_report"]
         trader_plan = state["investment_plan"]
+        judge_feedback_block = build_judge_feedback_block(
+            state, "risk_manager", "Risk Judge"
+        )
 
         curr_situation = f"{market_research_report}\n\n{sentiment_report}\n\n{news_report}\n\n{fundamentals_report}"
 
@@ -51,7 +55,8 @@ def create_risk_manager(llm, memory):
 
 ---
 
-专注于可操作的见解和持续改进。建立在过去经验教训的基础上，批判性地评估所有观点，确保每个决策都能带来更好的结果。请用中文撰写所有分析内容和建议。"""
+专注于可操作的见解和持续改进。建立在过去经验教训的基础上，批判性地评估所有观点，确保每个决策都能带来更好的结果。请用中文撰写所有分析内容和建议。
+{judge_feedback_block}"""
 
         # 📊 统计 prompt 大小
         prompt_length = len(prompt)

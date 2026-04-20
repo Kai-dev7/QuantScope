@@ -42,6 +42,8 @@ class Propagator:
             "trade_date": str(trade_date),
             "planner_plan": planner_plan or {},
             "focus_hint": focus_hint or "",
+            "judge_feedback": {},
+            "judge_scores": {},
             "session_id": session_id or "",
             "investment_debate_state": InvestDebateState(
                 {"history": "", "current_response": "", "count": 0}

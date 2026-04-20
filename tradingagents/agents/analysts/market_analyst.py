@@ -119,7 +119,6 @@ def create_market_analyst(llm, toolkit):
         # 获取公司名称
         company_name = _get_company_name(ticker, market_info)
         logger.debug(f"📈 [DEBUG] 公司名称: {ticker} -> {company_name}")
-
         # 统一使用 get_stock_market_data_unified 工具
         # 该工具内部会自动识别股票类型（A股/港股/美股）并调用相应的数据源
         logger.info(f"📊 [市场分析师] 使用统一市场数据工具，自动识别股票类型")

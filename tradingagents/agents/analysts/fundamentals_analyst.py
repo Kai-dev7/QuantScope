@@ -156,7 +156,6 @@ def create_fundamentals_analyst(llm, toolkit):
         # 获取公司名称
         company_name = _get_company_name_for_fundamentals(ticker, market_info)
         logger.debug(f"📊 [DEBUG] 公司名称: {ticker} -> {company_name}")
-
         # 统一使用 get_stock_fundamentals_unified 工具
         # 该工具内部会自动识别股票类型（A股/港股/美股）并调用相应的数据源
         # 对于A股，它会自动获取价格数据和基本面数据，无需LLM调用多个工具
