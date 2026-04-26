@@ -415,7 +415,3 @@ tar -czf exports_archive_$(date +%Y%m).tar.gz exports/
 - 📚 [Pandoc文档](https://pandoc.org/MANUAL.html)
 
 ---
-
-*最后更新: 2025-07-13*  
-*版本: cn-0.1.7*  
-*贡献者: [@baiyuxiong](https://github.com/baiyuxiong)*

@@ -157,17 +157,6 @@ npm run dev
 - AI 输出存在不确定性
 - 金融决策请结合专业判断与风险控制
 
-## 致谢
-
-QuantScope 在演进过程中参考并使用了开源社区的研究成果与部分上游基础工作。相关致谢、版权与许可信息请查看：
-
-- [ACKNOWLEDGMENTS.md](./ACKNOWLEDGMENTS.md)
-- [COPYRIGHT.md](./COPYRIGHT.md)
-- [LICENSE](./LICENSE)
-- [LICENSING.md](./LICENSING.md)
-
-如仓库中包含上游项目要求保留的归属与许可信息，请按相应条款一并保留。
-
 ---
 
 如果这个项目对你有帮助，可以给仓库一个 Star。

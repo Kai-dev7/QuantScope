@@ -585,13 +585,6 @@ docker-compose logs -f
 4. **[Docker部署指南](./docker-deployment-guide.md)** - 生产环境部署
 5. **[故障排除指南](../troubleshooting/)** - 常见问题解决方案
 
-## 🆘 获取帮助
-
-如果遇到问题，可以通过以下方式获取帮助：
-
-- **GitHub Issues**: [提交问题](https://github.com/your-repo/QuantScope/issues)
-- **文档**: [查看完整文档](../README.md)
-- **社区**: [加入讨论群](https://your-community-link)
 
 ---
 
