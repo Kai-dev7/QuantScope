@@ -1,0 +1,55 @@
+name: event-driven-news-analysis
+version: 1
+description: 面向突发新闻和事件驱动场景的快速分析流程
+
+selectors:
+  task_type: event_driven_analysis
+  market_scope: [A股, 港股, 美股]
+  research_depth: [快速, 标准]
+
+inputs:
+  required:
+    - stock_code
+    - analysis_date
+  optional:
+    - event_summary
+    - trigger_source
+
+analysts:
+  enabled:
+    - news
+    - market
+    - social
+
+tool_policy:
+  allowed_tools:
+    - get_stock_news_unified
+    - get_google_news
+    - get_stock_market_data_unified
+    - get_stock_sentiment_unified
+  max_tool_calls:
+    news: 3
+    market: 2
+    social: 2
+
+execution:
+  debate_rounds: 1
+  risk_rounds: 1
+  memory_enabled: false
+  llm_routing: fast_response
+
+output:
+  schema: event_analysis_v1
+  required_sections:
+    - event_summary
+    - market_reaction
+    - key_risks
+    - action
+
+quality_gates:
+  - report_completeness_check
+  - risk_disclosure_check
+
+fallback:
+  on_news_unavailable: switch_to_market_only_mode
+  on_social_unavailable: continue_without_social

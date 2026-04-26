@@ -26,6 +26,8 @@ class Propagator:
         session_id: str | None = None,
         planner_plan: Dict[str, Any] | None = None,
         focus_hint: str | None = None,
+        skill_name: str | None = None,
+        skill_tool_policy: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
         """Create the initial state for the agent graph."""
         from langchain_core.messages import HumanMessage
@@ -42,6 +44,8 @@ class Propagator:
             "trade_date": str(trade_date),
             "planner_plan": planner_plan or {},
             "focus_hint": focus_hint or "",
+            "skill_name": skill_name or "",
+            "skill_tool_policy": skill_tool_policy or {},
             "judge_feedback": {},
             "judge_scores": {},
             "session_id": session_id or "",

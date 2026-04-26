@@ -37,6 +37,8 @@ from app.services.redis_progress_tracker import (RedisProgressTracker,
                                                  get_progress_by_id)
 from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.graph.trading_graph import TradingAgentsGraph
+from tradingagents.skills import SkillMatchContext, SkillSelector, run_quality_gates
+from app.services.sessions import session_event_store, session_runtime_service
 
 # 股票基础信息获取（用于补充显示名称）
 try:
@@ -465,7 +467,8 @@ def create_analysis_config(
     llm_provider: str,
     market_type: str = "A股",
     quick_model_config: dict = None,  # 新增：快速模型的完整配置
-    deep_model_config: dict = None    # 新增：深度模型的完整配置
+    deep_model_config: dict = None,   # 新增：深度模型的完整配置
+    skill_definition = None
 ) -> dict:
     """
     创建分析配置 - 支持数字等级和中文等级
@@ -479,6 +482,7 @@ def create_analysis_config(
         market_type: 市场类型
         quick_model_config: 快速模型的完整配置（包含 max_tokens、temperature、timeout 等）
         deep_model_config: 深度模型的完整配置（包含 max_tokens、temperature、timeout 等）
+        skill_definition: 可选 skill 定义，用于增强 runtime config
 
     Returns:
         dict: 完整的分析配置
@@ -662,6 +666,35 @@ def create_analysis_config(
                    f"temperature={deep_model_config.get('temperature')}, "
                    f"timeout={deep_model_config.get('timeout')}, "
                    f"retry_times={deep_model_config.get('retry_times')}")
+
+    if skill_definition is not None:
+        try:
+            config["skill_name"] = skill_definition.name
+            config["skill_version"] = skill_definition.version
+            config["skill_description"] = skill_definition.description
+            config["skill_tool_policy"] = {
+                "allowed_tools": list(skill_definition.tool_policy.allowed_tools),
+                "max_tool_calls": dict(skill_definition.tool_policy.max_tool_calls),
+            }
+            config["skill_output_contract"] = {
+                "schema": skill_definition.output.schema,
+                "required_sections": list(skill_definition.output.required_sections),
+            }
+            config["skill_quality_gates"] = list(skill_definition.quality_gates)
+            config["skill_fallback"] = dict(skill_definition.fallback)
+
+            # Phase 1 允许 skill 覆盖执行策略，但仍不改 graph 主路径
+            config["max_debate_rounds"] = skill_definition.execution.debate_rounds
+            config["max_risk_discuss_rounds"] = skill_definition.execution.risk_rounds
+            config["memory_enabled"] = skill_definition.execution.memory_enabled
+            config["selected_analysts"] = list(skill_definition.analysts.enabled)
+            logger.info(
+                f"🧩 [Skill] 已注入 skill={skill_definition.name}@v{skill_definition.version}, "
+                f"analysts={config['selected_analysts']}, debate={config['max_debate_rounds']}, "
+                f"risk={config['max_risk_discuss_rounds']}"
+            )
+        except Exception as e:
+            logger.warning(f"⚠️ [Skill] 注入 skill 配置失败，将继续使用默认运行配置: {e}")
 
     logger.info(f"📋 ========== 创建分析配置完成 ==========")
     logger.info(f"   🎯 研究深度: {research_depth}")
@@ -1374,6 +1407,43 @@ class SimpleAnalysisService:
                     planner_result.focus_hint,
                 )
 
+            selected_skill = None
+            try:
+                selected_skill = SkillSelector().select_for_context(
+                    SkillMatchContext(
+                        task_type="single_stock_analysis",
+                        market_scope=market_type,
+                        research_depth=research_depth,
+                    )
+                )
+                if selected_skill:
+                    logger.info(
+                        f"🧩 [Skill] 选中 skill={selected_skill.name}@v{selected_skill.version} "
+                        f"for market={market_type}, depth={research_depth}"
+                    )
+                else:
+                    logger.info(
+                        f"🧩 [Skill] 未匹配到 skill，继续使用默认分析配置: market={market_type}, depth={research_depth}"
+                    )
+            except Exception as skill_err:
+                logger.warning(f"⚠️ [Skill] 选择 skill 失败，将继续使用默认分析配置: {skill_err}")
+
+            try:
+                session_runtime_service.start_session_sync(
+                    task_id,
+                    task_id=task_id,
+                    user_id=str(user_id),
+                    skill_name=selected_skill.name if selected_skill else "",
+                    skill_version=selected_skill.version if selected_skill else None,
+                    analysis_context={
+                        "symbol": request.get_symbol(),
+                        "market_type": market_type,
+                        "research_depth": research_depth,
+                    },
+                )
+            except Exception as session_err:
+                logger.warning(f"⚠️ [Session] 初始化 durable session 失败，将继续执行: {session_err}")
+
             # 创建分析配置（支持混合模式）
             config = create_analysis_config(
                 research_depth=research_depth,
@@ -1381,7 +1451,8 @@ class SimpleAnalysisService:
                 quick_model=quick_model,
                 deep_model=deep_model,
                 llm_provider=quick_provider,  # 主要使用快速模型的供应商
-                market_type=market_type  # 使用前端传递的市场类型
+                market_type=market_type,  # 使用前端传递的市场类型
+                skill_definition=selected_skill,
             )
 
             # 🔧 添加混合模式配置
@@ -1959,6 +2030,47 @@ class SimpleAnalysisService:
                 "focus_hint": planner_result.focus_hint if planner_result else state.get("focus_hint", "") if isinstance(state, dict) else "",
             }
 
+            if config.get("skill_name"):
+                result["skill"] = {
+                    "name": config.get("skill_name"),
+                    "version": config.get("skill_version"),
+                    "description": config.get("skill_description"),
+                    "quality_gates": config.get("skill_quality_gates", []),
+                }
+                result["quality_gate_results"] = run_quality_gates(
+                    result,
+                    config.get("skill_quality_gates", []),
+                )
+                quality_status = result["quality_gate_results"].get("status", "passed")
+                if quality_status == "warning":
+                    result["quality_status"] = "completed_with_warnings"
+                elif quality_status == "failed":
+                    result["quality_status"] = "requires_review"
+                else:
+                    result["quality_status"] = "passed"
+                try:
+                    session_event_store.append_event_sync(
+                        task_id,
+                        "quality_gate_evaluated",
+                        result["quality_gate_results"],
+                        source="service",
+                    )
+                except Exception as quality_gate_err:
+                    logger.warning(f"⚠️ [Session] 记录 quality gate 事件失败: {quality_gate_err}")
+
+            try:
+                session_runtime_service.complete_session_sync(
+                    task_id,
+                    status="completed",
+                    payload={
+                        "summary": result.get("summary", ""),
+                        "recommendation": result.get("recommendation", ""),
+                        "quality_status": result.get("quality_status", "passed"),
+                    },
+                )
+            except Exception as session_err:
+                logger.warning(f"⚠️ [Session] 更新完成状态失败: {session_err}")
+
             logger.info(f"✅ [线程池] 分析完成: {task_id} - 耗时{execution_time:.2f}秒")
 
             # 🔍 调试：检查返回的result结构
@@ -1972,6 +2084,14 @@ class SimpleAnalysisService:
 
         except Exception as e:
             logger.exception(f"❌ [线程池] 分析执行失败: {task_id} - {e}")
+            try:
+                session_runtime_service.complete_session_sync(
+                    task_id,
+                    status="failed",
+                    payload={"error": str(e)},
+                )
+            except Exception:
+                pass
 
             # 格式化错误信息为用户友好的提示
             from ..utils.error_formatter import ErrorFormatter

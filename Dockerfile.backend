@@ -71,6 +71,7 @@ RUN pip install --upgrade pip -i https://pypi.tuna.tsinghua.edu.cn/simple && \
 # 复制后端代码和必需模块
 COPY app ./app
 COPY tradingagents ./tradingagents
+COPY mcp_servers ./mcp_servers
 COPY config ./config
 COPY scripts ./scripts
 COPY docs ./docs

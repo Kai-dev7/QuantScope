@@ -930,6 +930,8 @@ class TradingAgentsGraph:
             session_id=task_id,
             planner_plan=planner_plan,
             focus_hint=focus_hint,
+            skill_name=self.config.get("skill_name"),
+            skill_tool_policy=self.config.get("skill_tool_policy"),
         )
 
         node_timings = {}

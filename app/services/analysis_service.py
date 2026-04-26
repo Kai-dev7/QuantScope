@@ -38,7 +38,7 @@ from app.services.redis_progress_tracker import RedisProgressTracker
 from app.services.config_provider import provider as config_provider
 from app.services.queue import DEFAULT_USER_CONCURRENT_LIMIT, GLOBAL_CONCURRENT_LIMIT, VISIBILITY_TIMEOUT_SECONDS
 from app.services.usage_statistics_service import UsageStatisticsService
-from app.services.session_event_service import session_event_service
+from app.services.sessions import session_event_store
 from app.models.config import UsageRecord
 
 import logging
@@ -104,7 +104,7 @@ class AnalysisService:
         payload: Optional[Dict[str, Any]] = None,
     ) -> None:
         try:
-            await session_event_service.append_event(session_id, event_type, payload)
+            await session_event_store.append_event(session_id, event_type, payload)
         except Exception as e:
             logger.warning(f"记录会话事件失败: {session_id} - {event_type} - {e}")
 
@@ -114,7 +114,7 @@ class AnalysisService:
         summary: Dict[str, Any],
     ) -> None:
         try:
-            await session_event_service.update_summary(session_id, summary)
+            await session_event_store.upsert_summary(summary)
         except Exception as e:
             logger.warning(f"更新会话摘要失败: {session_id} - {e}")
 

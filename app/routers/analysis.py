@@ -18,6 +18,7 @@ from app.services.analysis_service import get_analysis_service
 from app.services.simple_analysis_service import get_simple_analysis_service
 from app.services.websocket_manager import get_websocket_manager
 from app.services.stock_extraction_service import stock_extraction_service
+from tradingagents.skills import SkillMatchContext, SkillSelector, project_batch_skill_parameters
 from app.models.analysis import (
     SingleAnalysisRequest, BatchAnalysisRequest, AnalysisParameters,
     AnalysisTaskResponse, AnalysisBatchResponse, AnalysisHistoryQuery
@@ -823,6 +824,24 @@ async def submit_batch_analysis(
         if len(stock_symbols) > MAX_BATCH_SIZE:
             raise ValueError(f"批量分析最多支持 {MAX_BATCH_SIZE} 个股票，当前提交了 {len(stock_symbols)} 个")
 
+        batch_market_scope = request.parameters.market_type if request.parameters else "A股"
+        batch_depth = request.parameters.research_depth if request.parameters else "基础"
+        try:
+            selected_batch_skill = SkillSelector().select_for_context(
+                SkillMatchContext(
+                    task_type="batch_stock_analysis",
+                    market_scope=batch_market_scope,
+                    research_depth=batch_depth,
+                )
+            )
+            if selected_batch_skill:
+                logger.info(
+                    f"🧩 [批量分析] 选中 batch skill={selected_batch_skill.name}@v{selected_batch_skill.version}"
+                )
+        except Exception as skill_err:
+            selected_batch_skill = None
+            logger.warning(f"⚠️ [批量分析] 选择 batch skill 失败，继续按默认逻辑执行: {skill_err}")
+
         # 为每只股票创建单股分析任务
         for i, symbol in enumerate(stock_symbols):
             logger.info(f"📝 [批量分析] 正在创建第 {i+1}/{len(stock_symbols)} 个任务: {symbol}")
@@ -830,7 +849,7 @@ async def submit_batch_analysis(
             single_req = SingleAnalysisRequest(
                 symbol=symbol,
                 stock_code=symbol,  # 兼容字段
-                parameters=request.parameters
+                parameters=project_batch_skill_parameters(request.parameters, selected_batch_skill),
             )
 
             try:

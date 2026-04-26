@@ -15,6 +15,19 @@ class ConditionalLogic:
         self.max_debate_rounds = max_debate_rounds
         self.max_risk_discuss_rounds = max_risk_discuss_rounds
 
+    @staticmethod
+    def _get_skill_max_tool_calls(state: AgentState, analyst_key: str, default: int) -> int:
+        """Resolve tool call limits from skill policy, falling back to defaults."""
+        policy = state.get("skill_tool_policy") or {}
+        max_calls = policy.get("max_tool_calls") or {}
+        value = max_calls.get(analyst_key)
+        if value is None:
+            return default
+        try:
+            return max(0, int(value))
+        except (TypeError, ValueError):
+            return default
+
     def should_continue_market(self, state: AgentState):
         """Determine if market analysis should continue."""
         from tradingagents.utils.logging_init import get_logger
@@ -25,7 +38,7 @@ class ConditionalLogic:
 
         # 死循环修复: 添加工具调用次数检查
         tool_call_count = state.get("market_tool_call_count", 0)
-        max_tool_calls = 3
+        max_tool_calls = self._get_skill_max_tool_calls(state, "market", 3)
 
         # 检查是否已经有市场分析报告
         market_report = state.get("market_report", "")
@@ -70,7 +83,7 @@ class ConditionalLogic:
 
         # 死循环修复: 添加工具调用次数检查
         tool_call_count = state.get("sentiment_tool_call_count", 0)
-        max_tool_calls = 3
+        max_tool_calls = self._get_skill_max_tool_calls(state, "social", 3)
 
         # 检查是否已经有情绪分析报告
         sentiment_report = state.get("sentiment_report", "")
@@ -108,7 +121,7 @@ class ConditionalLogic:
 
         # 死循环修复: 添加工具调用次数检查
         tool_call_count = state.get("news_tool_call_count", 0)
-        max_tool_calls = 3
+        max_tool_calls = self._get_skill_max_tool_calls(state, "news", 3)
 
         # 检查是否已经有新闻分析报告
         news_report = state.get("news_report", "")
@@ -146,7 +159,7 @@ class ConditionalLogic:
 
         # 死循环修复: 添加工具调用次数检查
         tool_call_count = state.get("fundamentals_tool_call_count", 0)
-        max_tool_calls = 1  # 一次工具调用就能获取所有数据
+        max_tool_calls = self._get_skill_max_tool_calls(state, "fundamentals", 1)
 
         # 检查是否已经有基本面报告
         fundamentals_report = state.get("fundamentals_report", "")

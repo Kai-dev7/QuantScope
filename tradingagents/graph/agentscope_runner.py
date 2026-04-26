@@ -18,7 +18,10 @@ from tradingagents.agents import (
     create_social_media_analyst,
     create_trader,
 )
+from app.services.capabilities import capability_executor
+from app.services.sessions import session_event_store, session_runtime_service
 from .llm_judge import JUDGE_TARGETS, LLMJudge
+from tradingagents.skills import filter_allowed_tools
 try:
     from agentscope.agent import AgentBase  # noqa: F401
 except Exception as exc:  # pragma: no cover - handled at runtime
@@ -221,6 +224,10 @@ class AgentScopeRunner:
         if not hasattr(last_message, "tool_calls") or not last_message.tool_calls:
             return {}
 
+        allowed_tools = ((state.get("skill_tool_policy") or {}).get("allowed_tools") or [])
+        filtered_tools = filter_allowed_tools(tools, allowed_tools)
+        session_id = str(state.get("session_id", "") or "")
+
         tool_messages = []
         for tool_call in last_message.tool_calls:
             tool_name = tool_call.get("name")
@@ -228,19 +235,48 @@ class AgentScopeRunner:
             tool_id = tool_call.get("id")
 
             tool_result = None
-            for tool in tools:
+            for tool in filtered_tools:
                 current_tool_name = getattr(tool, "name", None) or getattr(
                     tool, "__name__", None
                 )
                 if current_tool_name == tool_name:
-                    try:
-                        tool_result = tool.invoke(tool_args)
-                    except Exception as tool_error:
-                        tool_result = f"工具执行失败: {tool_error}"
+                    capability_result = capability_executor.execute_local(
+                        tool,
+                        tool_args,
+                        session_id=session_id,
+                    )
+                    tool_result = (
+                        capability_result.result
+                        if capability_result.success
+                        else f"工具执行失败: {capability_result.error}"
+                    )
                     break
 
             if tool_result is None:
-                tool_result = f"未找到工具: {tool_name}"
+                if allowed_tools:
+                    tool_result = f"工具未被当前 skill 允许或未找到: {tool_name}"
+                    if session_id:
+                        session_event_store.append_event_sync(
+                            session_id,
+                            "tool_call_blocked",
+                            {
+                                "capability_name": tool_name,
+                                "reason": "not_allowed_or_not_found",
+                            },
+                            source="runtime",
+                        )
+                else:
+                    tool_result = f"未找到工具: {tool_name}"
+                    if session_id:
+                        session_event_store.append_event_sync(
+                            session_id,
+                            "tool_call_blocked",
+                            {
+                                "capability_name": tool_name,
+                                "reason": "not_found",
+                            },
+                            source="runtime",
+                        )
 
             tool_messages.append(
                 ToolMessage(content=str(tool_result), tool_call_id=tool_id)
@@ -263,6 +299,15 @@ class AgentScopeRunner:
                 progress_sender(node_name)
             start = time.time()
             max_attempts = 1 + int(self.toolkit.config.get("llm_judge_max_retries", 1))
+            session_id = str(state.get("session_id", "") or "")
+            if session_id:
+                session_event_store.append_event_sync(
+                    session_id,
+                    "node_started",
+                    {"node_name": node_name, "attempts": max_attempts},
+                    node_name=node_name,
+                    source="runtime",
+                )
 
             for attempt in range(max_attempts):
                 # 防御性清理：避免历史中残留非法 ToolMessage 影响下一次 LLM 调用
@@ -277,6 +322,20 @@ class AgentScopeRunner:
 
                 judge_result = self.judge.evaluate(node_name, state, updated_state)
                 updated_state = self._apply_judge_feedback(updated_state, node_name, judge_result or {})
+                if session_id:
+                    session_event_store.append_event_sync(
+                        session_id,
+                        "judge_evaluated",
+                        {
+                            "node_name": node_name,
+                            "attempt": attempt + 1,
+                            "score": (judge_result or {}).get("score", 0),
+                            "passed": (judge_result or {}).get("passed", True),
+                            "feedback": (judge_result or {}).get("feedback", ""),
+                        },
+                        node_name=node_name,
+                        source="judge",
+                    )
 
                 if judge_result and not judge_result.get("passed", True) and attempt < max_attempts - 1:
                     from tradingagents.utils.logging_init import get_logger
@@ -292,6 +351,34 @@ class AgentScopeRunner:
                 break
 
             node_timings[node_name] = time.time() - start
+            if session_id:
+                node_completed_event = session_event_store.append_event_sync(
+                    session_id,
+                    "node_completed",
+                    {
+                        "node_name": node_name,
+                        "duration_ms": int(node_timings[node_name] * 1000),
+                    },
+                    node_name=node_name,
+                    source="runtime",
+                )
+                try:
+                    session_runtime_service.checkpoint_sync(
+                        session_id,
+                        state_summary={
+                            "node_name": node_name,
+                            "last_event_seq": int(node_completed_event.get("seq", 0)),
+                        },
+                        recoverable_state={
+                            "messages_count": len(state.get("messages", [])),
+                            "judge_feedback": dict(state.get("judge_feedback", {}) or {}),
+                            "judge_scores": dict(state.get("judge_scores", {}) or {}),
+                        },
+                        checkpoint_id=f"{node_name.lower().replace(' ', '_')}_{int(time.time() * 1000)}",
+                        created_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
+                    )
+                except Exception:
+                    pass
 
         def run_tool_node(node_name: str, tools: List[Any]):
             nonlocal state

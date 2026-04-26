@@ -28,7 +28,7 @@ from pathlib import Path
 from app.core.config import settings
 from app.core.database import init_db, close_db
 from app.core.logging_config import setup_logging
-from app.routers import auth_db as auth, analysis, screening, queue, sse, health, favorites, config, reports, database, operation_logs, tags, tushare_init, akshare_init, baostock_init, historical_data, multi_period_sync, financial_data, news_data, social_media, internal_messages, usage_statistics, model_capabilities, cache, logs
+from app.routers import auth_db as auth, analysis, screening, queue, sse, health, favorites, config, reports, database, operation_logs, tags, tushare_init, akshare_init, baostock_init, historical_data, multi_period_sync, financial_data, news_data, social_media, internal_messages, usage_statistics, model_capabilities, cache, logs, sessions, quality
 from app.routers import sync as sync_router, multi_source_sync
 from app.routers import stocks as stocks_router
 from app.routers import stock_data as stock_data_router
@@ -40,6 +40,7 @@ from app.routers import scheduler as scheduler_router
 from app.services.basics_sync_service import get_basics_sync_service
 from app.services.multi_source_basics_sync_service import MultiSourceBasicsSyncService
 from app.services.scheduler_service import set_scheduler_instance
+from mcp_servers import mount_mcp_servers, start_mcp_servers
 from app.worker.tushare_sync_service import (
     run_tushare_basic_info_sync,
     run_tushare_quotes_sync,
@@ -266,6 +267,8 @@ async def lifespan(app: FastAPI):
             await qi.backfill_last_close_snapshot_if_needed()
         except Exception as e:
             logger.warning(f"Startup backfill failed (ignored): {e}")
+
+    mcp_stack = await start_mcp_servers()
 
     # 启动每日定时任务：可配置
     scheduler: AsyncIOScheduler | None = None
@@ -581,6 +584,11 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        try:
+            await mcp_stack.aclose()
+        except Exception as e:
+            logger.warning(f"MCP servers shutdown error: {e}")
+
         # 关闭时清理
         if scheduler:
             try:
@@ -700,6 +708,8 @@ app.include_router(model_capabilities.router, tags=["model-capabilities"])
 app.include_router(usage_statistics.router, tags=["usage-statistics"])
 app.include_router(database.router, prefix="/api/system", tags=["database"])
 app.include_router(cache.router, tags=["cache"])
+app.include_router(sessions.router, prefix="/api", tags=["sessions"])
+app.include_router(quality.router, prefix="/api", tags=["quality"])
 app.include_router(operation_logs.router, prefix="/api/system", tags=["operation_logs"])
 app.include_router(logs.router, prefix="/api/system", tags=["logs"])
 # 新增：系统配置只读摘要
@@ -728,6 +738,7 @@ app.include_router(financial_data.router, tags=["financial-data"])
 app.include_router(news_data.router, tags=["news-data"])
 app.include_router(social_media.router, tags=["social-media"])
 app.include_router(internal_messages.router, tags=["internal-messages"])
+mount_mcp_servers(app)
 
 
 @app.get("/")

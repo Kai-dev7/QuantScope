@@ -1,0 +1,48 @@
+name: batch-low-cost-screening
+version: 1
+description: 面向批量任务的低成本快速筛查流程
+
+selectors:
+  task_type: batch_stock_analysis
+  market_scope: [A股, 港股, 美股]
+  research_depth: [快速, 基础]
+
+inputs:
+  required:
+    - stock_code
+    - analysis_date
+  optional:
+    - screening_goal
+
+analysts:
+  enabled:
+    - market
+    - fundamentals
+
+tool_policy:
+  allowed_tools:
+    - get_stock_market_data_unified
+    - get_stock_fundamentals_unified
+  max_tool_calls:
+    market: 2
+    fundamentals: 1
+
+execution:
+  debate_rounds: 0
+  risk_rounds: 1
+  memory_enabled: false
+  llm_routing: cost_effective
+
+output:
+  schema: batch_screening_v1
+  required_sections:
+    - summary
+    - signals
+    - risks
+    - action
+
+quality_gates:
+  - report_completeness_check
+
+fallback:
+  on_missing_fundamentals: continue_with_market_only

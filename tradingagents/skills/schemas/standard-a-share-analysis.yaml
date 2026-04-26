@@ -1,0 +1,57 @@
+name: standard-a-share-analysis
+version: 1
+description: 标准 A 股单股分析流程
+
+selectors:
+  task_type: single_stock_analysis
+  market_scope: [A股]
+  research_depth: [标准, 深度]
+
+inputs:
+  required:
+    - stock_code
+    - analysis_date
+  optional:
+    - user_goal
+    - risk_preference
+
+analysts:
+  enabled:
+    - market
+    - fundamentals
+    - news
+  optional:
+    - social
+
+tool_policy:
+  allowed_tools:
+    - get_stock_market_data_unified
+    - get_stock_fundamentals_unified
+    - get_stock_news_unified
+  max_tool_calls:
+    market: 3
+    fundamentals: 1
+    news: 3
+
+execution:
+  debate_rounds: 1
+  risk_rounds: 2
+  memory_enabled: true
+  llm_routing: cost_balanced
+
+output:
+  schema: stock_analysis_v1
+  required_sections:
+    - summary
+    - risks
+    - valuation
+    - action
+
+quality_gates:
+  - report_completeness_check
+  - risk_disclosure_check
+  - target_price_sanity_check
+
+fallback:
+  on_missing_fundamentals: switch_to_market_news_mode
+  on_tool_timeout: retry_with_backup_provider
