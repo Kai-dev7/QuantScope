@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import anyio
+import threading
 from typing import Any, Dict
 
 from mcp.client.session import ClientSession
@@ -28,7 +30,12 @@ class MCPHands:
                     metadata={"server_url": server_url},
                 )
 
-    def execute(self, capability_name: str, arguments: Dict[str, Any], session_context: Dict[str, Any]) -> CapabilityResult:
+    async def execute_async(
+        self,
+        capability_name: str,
+        arguments: Dict[str, Any],
+        session_context: Dict[str, Any],
+    ) -> CapabilityResult:
         server_url = str((session_context or {}).get("server_url", "") or "")
         if not server_url:
             return CapabilityResult(
@@ -38,7 +45,7 @@ class MCPHands:
                 metadata={"session_context": session_context},
             )
         try:
-            return anyio.run(self._execute_async, server_url, capability_name, arguments)
+            return await self._execute_async(server_url, capability_name, arguments)
         except Exception as exc:
             return CapabilityResult(
                 success=False,
@@ -46,3 +53,25 @@ class MCPHands:
                 error=str(exc),
                 metadata={"server_url": server_url, "session_context": session_context},
             )
+
+    def execute(self, capability_name: str, arguments: Dict[str, Any], session_context: Dict[str, Any]) -> CapabilityResult:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return anyio.run(self.execute_async, capability_name, arguments, session_context)
+
+        result: CapabilityResult | None = None
+
+        def _runner() -> None:
+            nonlocal result
+            result = anyio.run(self.execute_async, capability_name, arguments, session_context)
+
+        thread = threading.Thread(target=_runner, daemon=True)
+        thread.start()
+        thread.join()
+        return result or CapabilityResult(
+            success=False,
+            capability_name=capability_name,
+            error="MCP execution did not return a result",
+            metadata={"session_context": session_context},
+        )

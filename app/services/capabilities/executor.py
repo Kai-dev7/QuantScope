@@ -98,5 +98,47 @@ class CapabilityExecutor:
 
         return result
 
+    async def execute_mcp_async(
+        self,
+        capability_name: str,
+        arguments: Dict[str, Any],
+        *,
+        session_context: Dict[str, Any],
+        session_id: str = "",
+        source: str = "mcp_tool",
+    ) -> CapabilityResult:
+        start = time.time()
+        if session_id:
+            session_event_store.append_event_sync(
+                session_id,
+                "tool_call_requested",
+                {
+                    "capability_name": capability_name,
+                    "arguments": arguments,
+                    "transport": "mcp",
+                },
+                source=source,
+            )
+
+        result = await self.mcp_hands.execute_async(capability_name, arguments, session_context)
+        result.latency_ms = int((time.time() - start) * 1000)
+        result.capability_name = capability_name
+
+        if session_id:
+            session_event_store.append_event_sync(
+                session_id,
+                "tool_call_completed" if result.success else "tool_call_blocked",
+                {
+                    "capability_name": capability_name,
+                    "success": result.success,
+                    "error": result.error,
+                    "latency_ms": result.latency_ms,
+                    "transport": "mcp",
+                },
+                source=source,
+            )
+
+        return result
+
 
 capability_executor = CapabilityExecutor()

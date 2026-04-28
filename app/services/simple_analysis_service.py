@@ -2042,10 +2042,11 @@ class SimpleAnalysisService:
                     config.get("skill_quality_gates", []),
                 )
                 quality_status = result["quality_gate_results"].get("status", "passed")
+                degrade_to = result["quality_gate_results"].get("degrade_to")
                 if quality_status == "warning":
                     result["quality_status"] = "completed_with_warnings"
                 elif quality_status == "failed":
-                    result["quality_status"] = "requires_review"
+                    result["quality_status"] = degrade_to or "needs_regeneration"
                 else:
                     result["quality_status"] = "passed"
                 try:
@@ -2059,9 +2060,14 @@ class SimpleAnalysisService:
                     logger.warning(f"⚠️ [Session] 记录 quality gate 事件失败: {quality_gate_err}")
 
             try:
+                session_terminal_status = "completed"
+                if result.get("quality_status") == "completed_with_warnings":
+                    session_terminal_status = "completed_with_warnings"
+                elif result.get("quality_status") == "needs_regeneration":
+                    session_terminal_status = "needs_regeneration"
                 session_runtime_service.complete_session_sync(
                     task_id,
-                    status="completed",
+                    status=session_terminal_status,
                     payload={
                         "summary": result.get("summary", ""),
                         "recommendation": result.get("recommendation", ""),

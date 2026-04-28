@@ -11,6 +11,7 @@ ARG TARGETARCH
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
+    PIP_DEFAULT_TIMEOUT=120 \
     TZ=Asia/Shanghai
 
 WORKDIR /app
@@ -31,9 +32,14 @@ RUN mkdir -p /app/logs /app/data /app/config && \
         ca-certificates \
         curl \
         fontconfig \
-        fonts-noto-cjk \
         wget \
-        xvfb && \
+        xvfb --fix-missing && \
+    # 中文字体单独安装，避免大包下载失败时拖垮整层构建
+    for attempt in 1 2 3; do \
+        apt-get install -y --no-install-recommends fonts-noto-cjk --fix-missing && break || \
+        { echo "fonts-noto-cjk install attempt ${attempt} failed"; [ "${attempt}" = "3" ] && false; sleep 5; }; \
+    done || \
+    apt-get install -y --no-install-recommends fonts-wqy-zenhei --fix-missing && \
     # 根据架构设置变量
     if [ "$TARGETARCH" = "arm64" ]; then \
         PANDOC_ARCH="arm64"; \
@@ -64,9 +70,16 @@ COPY pyproject.toml README.md ./
 # 2. 优先使用预编译的二进制wheel包（--prefer-binary）
 # 3. 避免从源码编译，大幅提升ARM架构构建速度
 # 4. 安装 PDF 导出工具: pdfkit
+# 5. 对大依赖下载增加重试，降低网络抖动导致的构建失败概率
 RUN pip install --upgrade pip -i https://pypi.tuna.tsinghua.edu.cn/simple && \
-    pip install --prefer-binary . -i https://pypi.tuna.tsinghua.edu.cn/simple && \
-    pip install --prefer-binary pdfkit -i https://pypi.tuna.tsinghua.edu.cn/simple
+    for attempt in 1 2 3; do \
+        pip install --prefer-binary . -i https://pypi.tuna.tsinghua.edu.cn/simple && break || \
+        { echo "pip install attempt ${attempt} failed"; [ "${attempt}" = "3" ] && exit 1; sleep 5; }; \
+    done && \
+    for attempt in 1 2 3; do \
+        pip install --prefer-binary pdfkit -i https://pypi.tuna.tsinghua.edu.cn/simple && break || \
+        { echo "pdfkit install attempt ${attempt} failed"; [ "${attempt}" = "3" ] && exit 1; sleep 5; }; \
+    done
 
 # 复制后端代码和必需模块
 COPY app ./app

@@ -12,6 +12,13 @@ from .models import SessionCheckpoint, SessionSummary
 
 
 class SessionRuntimeService:
+    @staticmethod
+    def _resolve_completion_event_type(status: str) -> str:
+        normalized = str(status or "").strip().lower()
+        if normalized in {"failed", "needs_regeneration", "requires_review"}:
+            return "session_failed"
+        return "session_completed"
+
     async def start_session(
         self,
         session_id: str,
@@ -175,7 +182,7 @@ class SessionRuntimeService:
         await session_event_store.upsert_summary(summary)
         await session_event_store.append_event(
             session_id,
-            "session_completed" if status == "completed" else "session_failed",
+            self._resolve_completion_event_type(status),
             payload or {},
             source="service",
         )
@@ -201,7 +208,7 @@ class SessionRuntimeService:
         )
         session_event_store.append_event_sync(
             session_id,
-            "session_completed" if status == "completed" else "session_failed",
+            self._resolve_completion_event_type(status),
             payload or {},
             source="service",
         )
