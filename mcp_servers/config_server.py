@@ -11,7 +11,7 @@ _transport_security = TransportSecuritySettings(
     allowed_origins=["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*", "http://host.docker.internal:*", "http://backend:*", "http://quantscope-backend:*"],
 )
 
-server = FastMCP(name="config-server", stateless_http=True, transport_security=_transport_security)
+server = FastMCP(name="config-server", stateless_http=False, transport_security=_transport_security)
 
 
 @server.tool(name="get_active_system_config")

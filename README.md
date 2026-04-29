@@ -57,7 +57,64 @@ QuantScope 重点解决三类问题：
 
 适合大多数体验和部署场景。
 
-参考文档：
+启动前建议确认：
+
+- 已安装 Docker Desktop / Docker Engine
+- 本机可用端口包括 `3000`、`8000`、`27017`、`6379`
+- 已准备好 `.env` 配置，或至少确认仓库中的默认配置可用于本地体验
+
+启动步骤：
+
+```bash
+docker compose build
+docker compose up -d
+```
+
+查看服务状态：
+
+```bash
+docker compose ps
+```
+
+查看后端日志：
+
+```bash
+docker logs -f quantscope-backend
+```
+
+默认访问地址：
+
+- 前端: `http://localhost:3000`
+- 后端 API: `http://localhost:8000`
+- 健康检查: `http://localhost:8000/api/health`
+
+停止服务：
+
+```bash
+docker compose down
+```
+
+如果只想重启后端：
+
+```bash
+docker compose up -d --force-recreate backend
+```
+
+如果修改了后端源码，例如 `app/`、`tradingagents/`、`mcp_servers/`，由于这些代码是构建镜像时复制进容器的，通常需要重新构建：
+
+```bash
+docker compose build backend
+docker compose up -d --force-recreate backend
+```
+
+如果修改了前端源码并使用 Docker 镜像部署，同样建议重新构建前端镜像：
+
+```bash
+docker compose build frontend
+docker compose up -d --force-recreate frontend
+```
+
+补充文档：
 
 - [Docker 部署文档](./docs/deployment/docker)
 - [快速开始](./docs/guides/quick-start-guide.md)
@@ -72,6 +129,14 @@ QuantScope 重点解决三类问题：
 - Node.js 18+
 - MongoDB
 - Redis
+- 推荐使用虚拟环境
+
+建议先准备后端虚拟环境：
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+```
 
 后端依赖安装：
 
@@ -86,6 +151,14 @@ cd frontend
 npm install
 ```
 
+如果需要本地数据库与缓存，可先启动 MongoDB 和 Redis。
+
+一种常见方式是只启动基础依赖容器：
+
+```bash
+docker compose up -d mongodb redis
+```
+
 后端启动：
 
 ```bash
@@ -98,6 +171,42 @@ python -m app.main
 cd frontend
 npm run dev
 ```
+
+源码运行时默认访问地址：
+
+- 前端开发服务器: `http://localhost:3000`
+- 后端 API: `http://localhost:8000`
+
+前端开发模式下会把 `/api` 请求代理到本地后端。
+
+### 常见启动顺序
+
+如果你是第一次在本地拉起项目，推荐顺序：
+
+1. 准备 `.env`
+2. 启动 MongoDB 和 Redis
+3. 启动后端 `python -m app.main`
+4. 启动前端 `cd frontend && npm run dev`
+5. 打开 `http://localhost:3000`
+
+### MCP 接入
+
+项目当前已经暴露多组 MCP server。
+
+例如单股分析 MCP endpoint：
+
+```text
+http://localhost:8000/mcp/analysis/mcp
+```
+
+当前 analysis MCP server 暴露的核心 tool 包括：
+
+- `submit_single_analysis`
+- `get_final_report`
+
+更详细的 Hermes 接入方式可参考：
+
+- [Hermes MCP 集成说明](./docs/integration/hermes_mcp_integration.md)
 
 ## 使用建议
 
