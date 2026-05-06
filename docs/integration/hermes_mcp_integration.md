@@ -4,6 +4,7 @@
 
 当前采用的交互模式是：
 
+- `extract_stock_from_prompt`
 - `submit_single_analysis`
 - `get_final_report`
 
@@ -46,6 +47,55 @@ http://localhost:8000/mcp/analysis/mcp
 - 不要使用 `/mcp/analysis`
 
 ## 3. 可用 Tool
+
+### 3.0 `extract_stock_from_prompt`
+
+作用：
+
+- 从自然语言用户请求中提取最相关的股票名称、股票代码和市场
+- 适合在用户没有直接提供标准 ticker/code 时先调用
+- 可作为 `submit_single_analysis` 的前置工具
+
+输入参数：
+
+```json
+{
+  "prompt": "帮我分析苹果公司最近的基本面"
+}
+```
+
+返回示例：
+
+```json
+{
+  "success": true,
+  "prompt": "帮我分析苹果公司最近的基本面",
+  "matched": true,
+  "stock_name": "苹果公司",
+  "stock_code": "AAPL",
+  "market": "US",
+  "confidence": 0.95,
+  "reason": "用户明确提到苹果公司",
+  "provider": "minmax",
+  "model": "MiniMax-M2.7",
+  "next_action": "Call submit_single_analysis with stock_code as symbol if matched=true."
+}
+```
+
+如果无法识别，会返回：
+
+```json
+{
+  "success": true,
+  "matched": false,
+  "stock_name": "",
+  "stock_code": "",
+  "market": "",
+  "confidence": 0.0,
+  "reason": "llm_failed",
+  "next_action": "Ask the user to clarify the target stock or provide a ticker/code."
+}
+```
 
 ### 3.1 `submit_single_analysis`
 
@@ -172,12 +222,13 @@ http://localhost:8000/mcp/analysis/mcp
 推荐工作流：
 
 1. Hermes 判断用户意图是单股研究
-2. 调 `submit_single_analysis`
-3. 保存 `task_id`
-4. 不做高频状态轮询
-5. 在下一轮或延迟一段时间后调 `get_final_report(task_id=...)`
-6. 若 `found=false`，延后重试
-7. 若 `found=true`，读取 `summary / recommendation / reports / decision`
+2. 如果用户输入不是明确 ticker/code，先调 `extract_stock_from_prompt`
+3. 如果 `matched=true`，用 `stock_code` 调 `submit_single_analysis`
+4. 保存 `task_id`
+5. 不做高频状态轮询
+6. 在下一轮或延迟一段时间后调 `get_final_report(task_id=...)`
+7. 若 `found=false`，延后重试
+8. 若 `found=true`，读取 `summary / recommendation / reports / decision`
 
 ## 5. 为什么不用状态轮询作为主模式
 
@@ -196,11 +247,13 @@ http://localhost:8000/mcp/analysis/mcp
 
 建议在 Hermes 侧把 QuantScope 封装成两个能力：
 
+- `extract_stock_target`
 - `start_stock_analysis`
 - `read_stock_analysis_report`
 
 映射关系：
 
+- `extract_stock_target` -> `extract_stock_from_prompt`
 - `start_stock_analysis` -> `submit_single_analysis`
 - `read_stock_analysis_report` -> `get_final_report`
 
@@ -225,6 +278,11 @@ Hermes 并不是“猜”这些 tool 怎么用，而是通过 MCP 的 tool metad
 - 某些参数的枚举约束
 
 对于 QuantScope 的 analysis MCP server，Hermes 会拿到类似这样的结构化信息：
+
+- `extract_stock_from_prompt`
+  - 从自然语言请求中提取股票名称、代码和市场
+  - 适合在用户只说“苹果公司”“贵州茅台”等自然语言目标时先调用
+  - 如果 `matched=false`，应要求用户补充股票名称或代码
 
 - `submit_single_analysis`
   - 这是一个长耗时分析任务提交 tool

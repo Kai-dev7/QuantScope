@@ -41,6 +41,7 @@ class BatchAnalyzeRequest(BaseModel):
 
 class StockExtractRequest(BaseModel):
     prompt: str = Field(..., description="用户输入的分析目标描述")
+    model_name: Optional[str] = Field(None, description="用于股票提取的模型名称，默认使用系统默认模型")
 
 
 @router.post("/extract-stock", response_model=Dict[str, Any])
@@ -50,8 +51,16 @@ async def extract_stock_from_prompt(
 ):
     """从自然语言目标中提取股票名称/代码。"""
     try:
-        logger.info("🧠 提取股票请求: user=%s prompt=%s", user.get("username"), request.prompt)
-        result = await stock_extraction_service.extract_from_prompt(request.prompt)
+        logger.info(
+            "🧠 提取股票请求: user=%s prompt=%s model=%s",
+            user.get("username"),
+            request.prompt,
+            request.model_name or "system-default",
+        )
+        result = await stock_extraction_service.extract_from_prompt(
+            request.prompt,
+            model_name=request.model_name,
+        )
         return {
             "success": True,
             "data": result,

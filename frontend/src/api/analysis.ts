@@ -267,8 +267,11 @@ export const analysisApi = {
     })
   },
 
-  extractStockFromPrompt(prompt: string): Promise<ApiResponse<ExtractedStockResult>> {
-    return request.post('/api/analysis/extract-stock', { prompt })
+  extractStockFromPrompt(prompt: string, modelName?: string): Promise<ApiResponse<ExtractedStockResult>> {
+    return request.post('/api/analysis/extract-stock', {
+      prompt,
+      model_name: modelName
+    })
   },
 
   // 获取热门股票
@@ -492,5 +495,4 @@ export const getStockPlaceholder = (market: string): string => {
   }
   return placeholders[market] ?? '输入股票代码'
 }
-
 

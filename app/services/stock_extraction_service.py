@@ -24,12 +24,12 @@ class StockExtractionService:
     def __init__(self) -> None:
         self.unified_config = UnifiedConfigManager()
 
-    async def extract_from_prompt(self, prompt: str) -> Dict[str, Any]:
+    async def extract_from_prompt(self, prompt: str, model_name: Optional[str] = None) -> Dict[str, Any]:
         text = (prompt or "").strip()
         if not text:
             return self._empty_result("empty_prompt")
 
-        model_name = self.unified_config.get_default_model()
+        model_name = (model_name or "").strip() or self.unified_config.get_default_model()
         provider_info = get_provider_and_url_by_model_sync(model_name)
         backend_url = provider_info.get("backend_url")
         api_key = provider_info.get("api_key")

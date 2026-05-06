@@ -9,6 +9,7 @@ from mcp.server.fastmcp.server import TransportSecuritySettings
 from app.core.database import get_mongo_db_sync
 from app.models.analysis import AnalysisParameters, SingleAnalysisRequest
 from app.services.simple_analysis_service import get_simple_analysis_service
+from app.services.stock_extraction_service import stock_extraction_service
 
 _transport_security = TransportSecuritySettings(
     enable_dns_rebinding_protection=True,
@@ -120,6 +121,69 @@ def _find_report_document(
         )
 
     return None
+
+
+def _format_stock_extraction_result(result: Dict[str, Any], prompt: str) -> Dict[str, Any]:
+    return {
+        "success": True,
+        "prompt": prompt,
+        "matched": bool(result.get("matched")),
+        "stock_name": _safe_string(result.get("stock_name"), ""),
+        "stock_code": _safe_string(result.get("stock_code"), ""),
+        "market": _safe_string(result.get("market"), ""),
+        "confidence": _safe_number(result.get("confidence"), 0.0),
+        "reason": _safe_string(result.get("reason"), ""),
+        "provider": _safe_string(result.get("provider"), ""),
+        "model": _safe_string(result.get("model"), ""),
+        "next_action": (
+            "Call submit_single_analysis with stock_code as symbol if matched=true."
+            if result.get("matched")
+            else "Ask the user to clarify the target stock or provide a ticker/code."
+        ),
+    }
+
+
+@server.tool(name="extract_stock_from_prompt")
+async def extract_stock_from_prompt(prompt: str) -> dict:
+    """
+    Extract the most relevant stock entity from a natural-language user request.
+
+    Use this tool before `submit_single_analysis` when the user asks for an
+    analysis using a company name, natural language, or an ambiguous stock
+    reference instead of a clean ticker/code.
+
+    This tool returns a normalized stock candidate:
+    - stock_name: Extracted company or stock name.
+    - stock_code: Extracted ticker/code when available.
+    - market: One of `CN`, `HK`, `US`, or empty string when unknown.
+    - confidence: A number from 0 to 1.
+    - matched: Whether a usable stock entity was found.
+
+    Recommended workflow:
+    1. Call `extract_stock_from_prompt(prompt=...)`.
+    2. If `matched=true` and `stock_code` is present, call
+       `submit_single_analysis(symbol=stock_code, ...)`.
+    3. If `matched=false`, ask the user to clarify the stock name or code.
+
+    Parameters:
+    - prompt: The user's original natural-language analysis target, for example
+      `帮我分析苹果公司最近的基本面` or `看看贵州茅台现在怎么样`.
+    """
+    text = _safe_string(prompt).strip()
+    if not text:
+        return {
+            "success": False,
+            "matched": False,
+            "stock_name": "",
+            "stock_code": "",
+            "market": "",
+            "confidence": 0.0,
+            "reason": "empty_prompt",
+            "next_action": "Ask the user to provide a stock name or ticker/code.",
+        }
+
+    result = await stock_extraction_service.extract_from_prompt(text)
+    return _format_stock_extraction_result(result, text)
 
 
 @server.tool(name="submit_single_analysis")

@@ -1,4 +1,5 @@
 import time
+import asyncio
 from typing import Any, Callable, Dict, List, Optional
 
 from langchain_core.messages import RemoveMessage, ToolMessage
@@ -20,6 +21,7 @@ from tradingagents.agents import (
 )
 from app.services.capabilities import capability_executor
 from app.services.sessions import session_event_store, session_runtime_service
+from .agentscope_pipeline_adapter import StateFunctionAgent, run_agentscope_fanout
 from .llm_judge import JUDGE_TARGETS, LLMJudge
 from tradingagents.skills import filter_allowed_tools
 try:
@@ -80,6 +82,14 @@ class AgentScopeStateAgent:
         return _StateReducer.apply(state, update)
 
 
+ANALYST_REPORT_KEYS = {
+    "market": "market_report",
+    "social": "sentiment_report",
+    "news": "news_report",
+    "fundamentals": "fundamentals_report",
+}
+
+
 class AgentScopeRunner:
     def __init__(
         self,
@@ -136,6 +146,12 @@ class AgentScopeRunner:
                 self.deep_llm,
                 min_score=int(toolkit.config.get("llm_judge_min_score", 7)),
             )
+        self.parallel_analyst_pipeline_enabled = bool(
+            toolkit.config.get("parallel_analyst_pipeline_enabled", True)
+        )
+        self.parallel_analyst_max_workers = int(
+            toolkit.config.get("parallel_analyst_max_workers", 4)
+        )
 
     def _apply_judge_feedback(self, state: Dict[str, Any], node_name: str, feedback: Dict[str, Any]) -> Dict[str, Any]:
         target = JUDGE_TARGETS.get(node_name)
@@ -284,6 +300,153 @@ class AgentScopeRunner:
 
         return {"messages": tool_messages}
 
+    def _run_single_analyst(self, analyst_key: str, state: Dict[str, Any]) -> Dict[str, Any]:
+        analyst_node = self.analyst_nodes[analyst_key]
+        analyst_name = f"{analyst_key.capitalize()} Analyst"
+        local_state = dict(state)
+        local_state["messages"] = list(state.get("messages", []))
+
+        local_timings: Dict[str, float] = {}
+
+        def run_agent(node_name: str, node_func):
+            nonlocal local_state
+            start = time.time()
+            max_attempts = 1 + int(self.toolkit.config.get("llm_judge_max_retries", 1))
+            session_id = str(local_state.get("session_id", "") or "")
+            if session_id:
+                session_event_store.append_event_sync(
+                    session_id,
+                    "node_started",
+                    {"node_name": node_name, "attempts": max_attempts, "mode": "parallel"},
+                    node_name=node_name,
+                    source="runtime",
+                )
+
+            for attempt in range(max_attempts):
+                if "messages" in local_state:
+                    local_state["messages"] = self._sanitize_message_history(local_state.get("messages", []))
+                agent = AgentScopeStateAgent(node_name, node_func)
+                updated_state = agent.reply(local_state)
+
+                if not self.judge or not self.judge.should_judge(node_name):
+                    local_state = updated_state
+                    break
+
+                judge_result = self.judge.evaluate(node_name, local_state, updated_state)
+                updated_state = self._apply_judge_feedback(updated_state, node_name, judge_result or {})
+                if session_id:
+                    session_event_store.append_event_sync(
+                        session_id,
+                        "judge_evaluated",
+                        {
+                            "node_name": node_name,
+                            "attempt": attempt + 1,
+                            "score": (judge_result or {}).get("score", 0),
+                            "passed": (judge_result or {}).get("passed", True),
+                            "feedback": (judge_result or {}).get("feedback", ""),
+                            "mode": "parallel",
+                        },
+                        node_name=node_name,
+                        source="judge",
+                    )
+                local_state = updated_state
+                break
+
+            local_timings[node_name] = time.time() - start
+            if session_id:
+                completed_event = session_event_store.append_event_sync(
+                    session_id,
+                    "node_completed",
+                    {
+                        "node_name": node_name,
+                        "duration_ms": int(local_timings[node_name] * 1000),
+                        "mode": "parallel",
+                    },
+                    node_name=node_name,
+                    source="runtime",
+                )
+                try:
+                    session_runtime_service.checkpoint_sync(
+                        session_id,
+                        state_summary={
+                            "node_name": node_name,
+                            "last_event_seq": int(completed_event.get("seq", 0)),
+                            "mode": "parallel",
+                        },
+                        recoverable_state={
+                            "messages_count": len(local_state.get("messages", [])),
+                            "judge_feedback": dict(local_state.get("judge_feedback", {}) or {}),
+                            "judge_scores": dict(local_state.get("judge_scores", {}) or {}),
+                        },
+                        checkpoint_id=f"{node_name.lower().replace(' ', '_')}_{int(time.time() * 1000)}",
+                        created_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
+                    )
+                except Exception:
+                    pass
+
+            return local_state
+
+        def run_tool_node(node_name: str, tools: List[Any]):
+            nonlocal local_state
+            start = time.time()
+            update = self._execute_tool_calls(local_state, tools)
+            local_state = _StateReducer.apply(local_state, update)
+            local_timings[node_name] = time.time() - start
+
+        def run_msg_clear(node_name: str):
+            nonlocal local_state
+            start = time.time()
+            update = self.delete_node(local_state)
+            local_state = _StateReducer.apply(local_state, update)
+            local_timings[node_name] = time.time() - start
+
+        run_agent(analyst_name, analyst_node)
+        while True:
+            next_step = getattr(
+                self.conditional_logic, f"should_continue_{analyst_key}"
+            )(local_state)
+            if next_step.startswith("tools_"):
+                run_tool_node(next_step, self.tool_map.get(analyst_key, []))
+                run_agent(analyst_name, analyst_node)
+                continue
+            if next_step.startswith("Msg Clear"):
+                run_msg_clear(next_step)
+            break
+
+        return local_state, local_timings
+
+    def _merge_parallel_analyst_state(
+        self,
+        base_state: Dict[str, Any],
+        analyst_states: Dict[str, Dict[str, Any]],
+        agent_messages: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        merged = dict(base_state)
+        merged_messages = list(base_state.get("messages", []))
+        merged_timings = dict(base_state.get("node_timings", {}) or {})
+
+        for analyst_key in ("market", "social", "news", "fundamentals"):
+            state = analyst_states.get(analyst_key)
+            if not state:
+                continue
+            report_key = ANALYST_REPORT_KEYS[analyst_key]
+            if state.get(report_key):
+                merged[report_key] = state[report_key]
+            for counter_key in (
+                "market_tool_call_count",
+                "sentiment_tool_call_count",
+                "news_tool_call_count",
+                "fundamentals_tool_call_count",
+            ):
+                if counter_key in state:
+                    merged[counter_key] = state[counter_key]
+            merged_timings.update(state.get("node_timings", {}) or {})
+
+        merged["messages"] = merged_messages
+        merged["node_timings"] = merged_timings
+        merged["parallel_runtime_messages"] = agent_messages
+        return merged
+
     def run(
         self,
         init_state: Dict[str, Any],
@@ -394,8 +557,69 @@ class AgentScopeRunner:
             state = _StateReducer.apply(state, update)
             node_timings[node_name] = time.time() - start
 
-        # Analysts
-        for analyst_key in selected_analysts:
+        parallel_analysts = [key for key in selected_analysts if key in {"market", "social", "news", "fundamentals"}]
+        sequential_analysts = [key for key in selected_analysts if key not in {"market", "social", "news", "fundamentals"}]
+
+        if self.parallel_analyst_pipeline_enabled and len(parallel_analysts) > 1:
+            analyst_states: Dict[str, Dict[str, Any]] = {}
+            agents = [
+                StateFunctionAgent(
+                    name=analyst_key,
+                    handler=lambda local_state, key=analyst_key: self._run_single_analyst(key, local_state),
+                )
+                for analyst_key in parallel_analysts[: self.parallel_analyst_max_workers]
+            ]
+            asyncio.run(
+                run_agentscope_fanout(
+                    name="analyst-stage",
+                    agents=agents,
+                    state=state,
+                )
+            )
+            agent_messages: List[Dict[str, Any]] = []
+            for agent in agents:
+                if agent.last_result is None:
+                    raise RuntimeError(f"AgentScope fanout analyst failed: {agent.name}")
+                analyst_state, timings = agent.last_result
+                analyst_state["node_timings"] = timings
+                analyst_states[agent.name] = analyst_state
+                agent_messages.append(
+                    {
+                        "topic": "agent_completed",
+                        "source": agent.name,
+                        "payload": {
+                            "report_key": ANALYST_REPORT_KEYS[agent.name],
+                            "has_report": bool(analyst_state.get(ANALYST_REPORT_KEYS[agent.name])),
+                            "duration_ms": agent.last_duration_ms,
+                            "observed_messages": [msg.to_dict() for msg in agent.observed_messages],
+                        },
+                    }
+                )
+
+            state = self._merge_parallel_analyst_state(state, analyst_states, agent_messages)
+            node_timings.update(state.get("node_timings", {}) or {})
+            sequential_analysts = sequential_analysts + [
+                key for key in parallel_analysts[self.parallel_analyst_max_workers :]
+            ]
+        else:
+            for analyst_key in parallel_analysts:
+                analyst_node = self.analyst_nodes[analyst_key]
+                analyst_name = f"{analyst_key.capitalize()} Analyst"
+                run_agent(analyst_name, analyst_node)
+
+                while True:
+                    next_step = getattr(
+                        self.conditional_logic, f"should_continue_{analyst_key}"
+                    )(state)
+                    if next_step.startswith("tools_"):
+                        run_tool_node(next_step, self.tool_map.get(analyst_key, []))
+                        run_agent(analyst_name, analyst_node)
+                        continue
+                    if next_step.startswith("Msg Clear"):
+                        run_msg_clear(next_step)
+                    break
+
+        for analyst_key in sequential_analysts:
             analyst_node = self.analyst_nodes[analyst_key]
             analyst_name = f"{analyst_key.capitalize()} Analyst"
             run_agent(analyst_name, analyst_node)

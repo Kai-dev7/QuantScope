@@ -1161,7 +1161,10 @@ const tryResolveStockFromPrompt = async (): Promise<boolean> => {
   }
 
   try {
-    const extractionResponse = await analysisApi.extractStockFromPrompt(prompt)
+    const extractionResponse = await analysisApi.extractStockFromPrompt(
+      prompt,
+      modelSettings.value.quickAnalysisModel
+    )
     const extracted = extractionResponse.data
     if (extracted?.matched) {
       const normalizedMarket = normalizeMarketCodeToLabel(extracted.market)
