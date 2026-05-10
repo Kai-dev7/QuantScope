@@ -4,6 +4,7 @@ import json
 
 # 导入统一日志系统
 from tradingagents.utils.logging_init import get_logger
+from tradingagents.agents.utils.llm_resilience import invoke_llm_with_fallback, log_prompt_stats
 logger = get_logger("default")
 
 
@@ -125,9 +126,23 @@ def create_bull_researcher(llm, memory):
 请确保所有回答都使用中文。
 """
 
-        response = llm.invoke(prompt)
+        log_prompt_stats("Bull Researcher", prompt)
+        fallback = f"""看涨研究员降级输出：本轮调用模型服务时发生连接失败，流程将继续使用已有分析资料。
 
-        argument = f"Bull Analyst: {response.content}"
+基于当前已完成的市场、情绪、新闻和基本面报告，{company_name} 的看涨观点仍应重点关注：
+1. 基本面报告中体现的盈利能力、估值或财务改善信号。
+2. 市场研究报告中的趋势、支撑位、成交量和资金关注度。
+3. 新闻与情绪报告中可能带来的短期催化。
+
+注意：该段为连接失败后的保守降级内容，不等同于完整多头论证，后续投资经理应降低对本轮多头发言的权重。"""
+        response_content = invoke_llm_with_fallback(
+            node_name="Bull Researcher",
+            llm=llm,
+            prompt=prompt,
+            fallback_content=fallback,
+        )
+
+        argument = f"Bull Analyst: {response_content}"
 
         new_count = investment_debate_state["count"] + 1
         logger.info(f"🐂 [多头研究员] 发言完成，计数: {investment_debate_state['count']} -> {new_count}")

@@ -24,6 +24,28 @@ logger = logging.getLogger(__name__)
 class ModelCapabilityService:
     """模型能力管理服务"""
 
+    def _normalize_feature(self, feature: Any) -> Optional[ModelFeature]:
+        if isinstance(feature, ModelFeature):
+            return feature
+        if isinstance(feature, str):
+            for candidate in (feature, feature.lower()):
+                try:
+                    return ModelFeature(candidate)
+                except ValueError:
+                    continue
+        return None
+
+    def _normalize_role(self, role: Any) -> Optional[ModelRole]:
+        if isinstance(role, ModelRole):
+            return role
+        if isinstance(role, str):
+            for candidate in (role, role.lower()):
+                try:
+                    return ModelRole(candidate)
+                except ValueError:
+                    continue
+        return None
+
     def _get_active_db_model_configs(self) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         """优先从当前激活的数据库配置读取模型与系统设置。"""
         try:
@@ -180,25 +202,29 @@ class ModelCapabilityService:
                         features_str = config_dict.get('features', [])
                         features_enum = []
                         for feature_str in features_str:
-                            try:
-                                # 将字符串转换为 ModelFeature 枚举
-                                features_enum.append(ModelFeature(feature_str))
-                            except ValueError:
+                            feature_enum = self._normalize_feature(feature_str)
+                            if feature_enum:
+                                features_enum.append(feature_enum)
+                            else:
                                 logger.warning(f"⚠️ 未知的特性值: {feature_str}")
 
                         # 🔧 将字符串列表转换为枚举列表
                         roles_str = config_dict.get('suitable_roles', ["both"])
                         roles_enum = []
                         for role_str in roles_str:
-                            try:
-                                # 将字符串转换为 ModelRole 枚举
-                                roles_enum.append(ModelRole(role_str))
-                            except ValueError:
+                            role_enum = self._normalize_role(role_str)
+                            if role_enum:
+                                roles_enum.append(role_enum)
+                            else:
                                 logger.warning(f"⚠️ 未知的角色值: {role_str}")
 
                         # 如果没有角色，默认为 both
                         if not roles_enum:
                             roles_enum = [ModelRole.BOTH]
+
+                        if not features_enum and model_name in DEFAULT_MODEL_CAPABILITIES:
+                            features_enum = list(DEFAULT_MODEL_CAPABILITIES[model_name].get("features", []))
+                            logger.info(f"🔧 [MongoDB配置] {model_name} 未配置 features，回退到内置能力表: {features_enum}")
 
                         logger.info(f"📊 [MongoDB配置] {model_name}: features={features_enum}, roles={roles_enum}")
 
@@ -296,7 +322,8 @@ class ModelCapabilityService:
             logger.warning(warning)
 
         # 检查快速模型是否支持工具调用
-        quick_features = quick_config.get("features", [])
+        quick_features = [self._normalize_feature(f) for f in quick_config.get("features", [])]
+        quick_features = [f for f in quick_features if f is not None]
         logger.info(f"🔍 检查快速模型特性: {quick_features}")
         if ModelFeature.TOOL_CALLING not in quick_features:
             result["valid"] = False
@@ -328,7 +355,8 @@ class ModelCapabilityService:
         logger.info(f"🔍 检查必需特性: {requirements['required_features']}")
         for feature in requirements["required_features"]:
             if feature == ModelFeature.REASONING:
-                deep_features = deep_config.get("features", [])
+                deep_features = [self._normalize_feature(f) for f in deep_config.get("features", [])]
+                deep_features = [f for f in deep_features if f is not None]
                 logger.info(f"🔍 检查深度模型推理能力: {deep_features}")
                 if feature not in deep_features:
                     warning = f"💡 {research_depth} 分析建议使用具有强推理能力的深度模型"

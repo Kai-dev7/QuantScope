@@ -3,6 +3,7 @@ import json
 
 # 导入统一日志系统
 from tradingagents.utils.logging_init import get_logger
+from tradingagents.agents.utils.llm_resilience import invoke_llm_with_fallback
 logger = get_logger("default")
 
 
@@ -57,13 +58,19 @@ def create_neutral_debator(llm):
         logger.info(f"⏱️ [Neutral Analyst] 开始调用LLM...")
         llm_start_time = time.time()
 
-        response = llm.invoke(prompt)
+        fallback = """Neutral Analyst: 中性风险分析师降级输出：模型服务连接失败，本轮采用平衡观点。建议风险经理在收益机会和下行风险之间保持中性判断，等待模型服务稳定后再提高自动决策权重。"""
+        response_content = invoke_llm_with_fallback(
+            node_name="Neutral Analyst",
+            llm=llm,
+            prompt=prompt,
+            fallback_content=fallback,
+        )
 
         llm_elapsed = time.time() - llm_start_time
         logger.info(f"⏱️ [Neutral Analyst] LLM调用完成，耗时: {llm_elapsed:.2f}秒")
-        logger.info(f"📝 [Neutral Analyst] 响应长度: {len(response.content):,} 字符")
+        logger.info(f"📝 [Neutral Analyst] 响应长度: {len(response_content):,} 字符")
 
-        argument = f"Neutral Analyst: {response.content}"
+        argument = response_content if response_content.startswith("Neutral Analyst:") else f"Neutral Analyst: {response_content}"
 
         new_count = risk_debate_state["count"] + 1
         logger.info(f"⚖️ [中性风险分析师] 发言完成，计数: {risk_debate_state['count']} -> {new_count}")

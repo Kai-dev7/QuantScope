@@ -7,6 +7,7 @@ import asyncio
 import logging
 import sys
 import uuid
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -590,6 +591,16 @@ def create_analysis_config(
         config["memory_enabled"] = True
         config["online_tools"] = True
 
+    config["parallel_analyst_pipeline_enabled"] = (
+        os.getenv("PARALLEL_ANALYST_PIPELINE_ENABLED", "true").lower() == "true"
+    )
+    config["llm_judge_enabled"] = (
+        os.getenv("LLM_JUDGE_ENABLED", str(config.get("llm_judge_enabled", True))).lower() == "true"
+    )
+    config["llm_judge_max_retries"] = int(
+        os.getenv("LLM_JUDGE_MAX_RETRIES", str(config.get("llm_judge_max_retries", 1)))
+    )
+
     # 🔧 获取 backend_url 和 API Key（优先级：模型配置 > 厂家配置 > 环境变量）
     try:
         # 1️⃣ 优先从数据库获取（包含模型配置的 api_base、API Key 和厂家的 default_base_url、API Key）
@@ -701,6 +712,8 @@ def create_analysis_config(
     logger.info(f"   🔥 辩论轮次: {config['max_debate_rounds']}")
     logger.info(f"   ⚖️ 风险讨论轮次: {config['max_risk_discuss_rounds']}")
     logger.info(f"   💾 记忆功能: {config['memory_enabled']}")
+    logger.info(f"   🧵 分析师并发: {config['parallel_analyst_pipeline_enabled']}")
+    logger.info(f"   🧪 LLM Judge: {config['llm_judge_enabled']} (max_retries={config['llm_judge_max_retries']})")
     logger.info(f"   🌐 在线工具: {config['online_tools']}")
     logger.info(f"   🤖 LLM供应商: {llm_provider}")
     logger.info(f"   ⚡ 快速模型: {config['quick_think_llm']}")

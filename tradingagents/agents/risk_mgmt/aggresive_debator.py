@@ -3,6 +3,7 @@ import json
 
 # 导入统一日志系统
 from tradingagents.utils.logging_init import get_logger
+from tradingagents.agents.utils.llm_resilience import invoke_llm_with_fallback
 logger = get_logger("default")
 
 
@@ -54,12 +55,18 @@ def create_risky_debator(llm):
         import time
         llm_start_time = time.time()
 
-        response = llm.invoke(prompt)
+        fallback = """Risky Analyst: 激进风险分析师降级输出：模型服务连接失败，本轮不补充新的高风险进攻观点。基于风控原则，后续风险经理应降低激进观点权重，避免因信息不完整而扩大仓位。"""
+        response_content = invoke_llm_with_fallback(
+            node_name="Risky Analyst",
+            llm=llm,
+            prompt=prompt,
+            fallback_content=fallback,
+        )
 
         llm_elapsed = time.time() - llm_start_time
         logger.info(f"⏱️ [Risky Analyst] LLM调用完成，耗时: {llm_elapsed:.2f}秒")
 
-        argument = f"Risky Analyst: {response.content}"
+        argument = response_content if response_content.startswith("Risky Analyst:") else f"Risky Analyst: {response_content}"
 
         new_count = risk_debate_state["count"] + 1
         logger.info(f"🔥 [激进风险分析师] 发言完成，计数: {risk_debate_state['count']} -> {new_count}")

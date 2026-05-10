@@ -5,6 +5,7 @@ import json
 # 导入统一日志系统
 from tradingagents.utils.logging_init import get_logger
 from tradingagents.agents.utils.judge_feedback import build_judge_feedback_block
+from tradingagents.agents.utils.llm_resilience import invoke_llm_with_fallback
 logger = get_logger("default")
 
 
@@ -105,16 +106,31 @@ def create_trader(llm, memory):
         logger.debug(f"💰 [DEBUG] 准备调用LLM，系统提示包含货币: {currency}")
         logger.debug(f"💰 [DEBUG] 系统提示中的关键部分: 目标价格({currency})")
 
-        result = llm.invoke(messages)
+        fallback = f"""交易员降级决策：由于模型服务连接失败，本轮交易员节点使用保守策略继续流程。
+
+投资建议：持有/观望
+目标价位：参考当前价格附近区间，等待模型服务恢复后重新生成精确目标价。
+置信度：0.35
+风险评分：0.65
+详细推理：上游研究经理已给出降级投资计划，说明当前自动分析链存在模型服务不稳定问题。在无法可靠生成完整交易方案时，不应给出激进买入或卖出指令。建议暂不新增仓位，已有仓位严格控制止损，待服务稳定后重新运行完整分析。
+
+最终交易建议: **持有**"""
+
+        result_content = invoke_llm_with_fallback(
+            node_name="Trader",
+            llm=llm,
+            prompt=messages,
+            fallback_content=fallback,
+        )
 
         logger.debug(f"💰 [DEBUG] LLM调用完成")
-        logger.debug(f"💰 [DEBUG] 交易员回复长度: {len(result.content)}")
-        logger.debug(f"💰 [DEBUG] 交易员回复前500字符: {result.content[:500]}...")
+        logger.debug(f"💰 [DEBUG] 交易员回复长度: {len(result_content)}")
+        logger.debug(f"💰 [DEBUG] 交易员回复前500字符: {result_content[:500]}...")
         logger.debug(f"💰 [DEBUG] ===== 交易员节点结束 =====")
 
         return {
-            "messages": [result],
-            "trader_investment_plan": result.content,
+            "messages": [],
+            "trader_investment_plan": result_content,
             "sender": name,
         }
 

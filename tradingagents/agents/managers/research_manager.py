@@ -4,6 +4,7 @@ import json
 # 导入统一日志系统
 from tradingagents.utils.logging_init import get_logger
 from tradingagents.agents.utils.judge_feedback import build_judge_feedback_block
+from tradingagents.agents.utils.llm_resilience import invoke_llm_with_fallback
 logger = get_logger("default")
 
 
@@ -81,33 +82,38 @@ def create_research_manager(llm, memory):
         logger.info(f"   - 总 Prompt 长度: {prompt_length} 字符")
         logger.info(f"   - 估算输入 Token: ~{estimated_tokens} tokens")
 
-        # ⏱️ 记录开始时间
-        start_time = time.time()
+        fallback = f"""研究经理降级投资计划：本轮调用模型服务时发生连接失败，流程将继续输出保守建议。
 
-        response = llm.invoke(prompt)
-
-        # ⏱️ 记录结束时间
-        elapsed_time = time.time() - start_time
+建议：持有/观望。
+理由：系统已完成市场、情绪、新闻、基本面和多空辩论输入，但研究经理模型调用失败，无法可靠生成完整买卖判断。为避免在不完整裁决下给出过度激进建议，默认采用持有/观望。
+目标价格：参考当前市场价格附近区间，需结合市场报告中的支撑位、阻力位和基本面估值重新确认。
+执行策略：暂不新增仓位；已有仓位控制风险敞口；等待模型服务稳定后重新运行完整研究经理裁决。
+风险提示：该结论为连接失败后的降级结果，置信度较低，应降低自动交易权重。"""
+        response_content = invoke_llm_with_fallback(
+            node_name="Research Manager",
+            llm=llm,
+            prompt=prompt,
+            fallback_content=fallback,
+        )
 
         # 📊 统计响应信息
-        response_length = len(response.content) if response and hasattr(response, 'content') else 0
+        response_length = len(response_content)
         estimated_output_tokens = int(response_length / 1.8)
 
-        logger.info(f"⏱️ [Research Manager] LLM调用耗时: {elapsed_time:.2f}秒")
         logger.info(f"📊 [Research Manager] 响应统计: {response_length} 字符, 估算~{estimated_output_tokens} tokens")
 
         new_investment_debate_state = {
-            "judge_decision": response.content,
+            "judge_decision": response_content,
             "history": investment_debate_state.get("history", ""),
             "bear_history": investment_debate_state.get("bear_history", ""),
             "bull_history": investment_debate_state.get("bull_history", ""),
-            "current_response": response.content,
+            "current_response": response_content,
             "count": investment_debate_state["count"],
         }
 
         return {
             "investment_debate_state": new_investment_debate_state,
-            "investment_plan": response.content,
+            "investment_plan": response_content,
         }
 
     return research_manager_node

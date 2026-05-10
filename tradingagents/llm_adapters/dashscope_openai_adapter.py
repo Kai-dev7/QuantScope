@@ -5,9 +5,15 @@
 """
 
 import os
+import time
 from typing import Any, Dict, List, Optional, Union, Sequence
+import httpx
 from langchain_openai import ChatOpenAI
 from langchain_core.tools import BaseTool
+from langchain_core.messages import BaseMessage
+from langchain_core.outputs import ChatResult
+from langchain_core.callbacks import CallbackManagerForLLMRun
+from openai import APIConnectionError, APITimeoutError, RateLimitError
 from pydantic import Field, SecretStr
 from ..config.config_manager import token_tracker
 
@@ -75,6 +81,8 @@ class ChatDashScopeOpenAI(ChatOpenAI):
         kwargs.setdefault("model", "qwen-turbo")
         kwargs.setdefault("temperature", 0.1)
         kwargs.setdefault("max_tokens", 2000)
+        kwargs.setdefault("timeout", float(os.getenv("DASHSCOPE_OPENAI_TIMEOUT_SECONDS", "45")))
+        kwargs.setdefault("max_retries", int(os.getenv("DASHSCOPE_OPENAI_CLIENT_MAX_RETRIES", "0")))
 
         # 检查 API 密钥和 base_url
         final_api_key = kwargs.get("api_key")
@@ -99,11 +107,61 @@ class ChatDashScopeOpenAI(ChatOpenAI):
         api_base = getattr(self, 'base_url', None) or getattr(self, 'openai_api_base', None) or kwargs.get('base_url', 'unknown')
         logger.info(f"   API Base: {api_base}")
     
-    def _generate(self, *args, **kwargs):
+    def _generate(
+        self,
+        messages: List[BaseMessage],
+        stop: Optional[List[str]] = None,
+        run_manager: Optional[CallbackManagerForLLMRun] = None,
+        **kwargs: Any,
+    ) -> ChatResult:
         """重写生成方法，添加 token 使用量追踪"""
-        
-        # 调用父类的生成方法
-        result = super()._generate(*args, **kwargs)
+
+        start_time = time.time()
+        prompt_chars = sum(
+            len(str(getattr(message, "content", message))) for message in messages
+        )
+        retryable_errors = (
+            httpx.RemoteProtocolError,
+            httpx.ConnectError,
+            httpx.ReadTimeout,
+            APIConnectionError,
+            APITimeoutError,
+            RateLimitError,
+        )
+        max_attempts = int(os.getenv("DASHSCOPE_OPENAI_MAX_RETRIES", "3"))
+        max_attempts = max(1, max_attempts)
+        last_error = None
+
+        for attempt in range(max_attempts):
+            try:
+                result = super()._generate(messages, stop, run_manager, **kwargs)
+                break
+            except retryable_errors as e:
+                last_error = e
+                if attempt >= max_attempts - 1:
+                    logger.error(
+                        "❌ [DashScope] LLM请求重试耗尽: model=%s, prompt_chars=%s, elapsed=%.2fs, error=%s",
+                        getattr(self, "model_name", "unknown"),
+                        prompt_chars,
+                        time.time() - start_time,
+                        e,
+                    )
+                    raise
+                wait_seconds = float(os.getenv("DASHSCOPE_OPENAI_RETRY_BASE_SECONDS", "1.5")) * (attempt + 1)
+                logger.warning(
+                    "⚠️ [DashScope] LLM请求失败，准备重试: model=%s, attempt=%s/%s, "
+                    "prompt_chars=%s, wait=%.1fs, error=%s",
+                    getattr(self, "model_name", "unknown"),
+                    attempt + 1,
+                    max_attempts,
+                    prompt_chars,
+                    wait_seconds,
+                    e,
+                )
+                time.sleep(wait_seconds)
+
+        if last_error and "result" not in locals():
+            raise last_error
         
         # 追踪 token 使用量
         try:
@@ -116,7 +174,7 @@ class ChatDashScopeOpenAI(ChatOpenAI):
                 
                 if input_tokens > 0 or output_tokens > 0:
                     # 生成会话ID
-                    session_id = kwargs.get('session_id', f"dashscope_openai_{hash(str(args))%10000}")
+                    session_id = kwargs.get('session_id', f"dashscope_openai_{hash(str(messages))%10000}")
                     analysis_type = kwargs.get('analysis_type', 'stock_analysis')
                     
                     # 使用 TokenTracker 记录使用量
@@ -132,6 +190,13 @@ class ChatDashScopeOpenAI(ChatOpenAI):
         except Exception as track_error:
             # token 追踪失败不应该影响主要功能
             logger.error(f"⚠️ Token 追踪失败: {track_error}")
+
+        logger.info(
+            "📊 [DashScope] LLM调用完成: model=%s, prompt_chars=%s, elapsed=%.2fs",
+            getattr(self, "model_name", "unknown"),
+            prompt_chars,
+            time.time() - start_time,
+        )
         
         return result
 

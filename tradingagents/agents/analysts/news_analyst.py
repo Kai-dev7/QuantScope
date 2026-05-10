@@ -200,10 +200,13 @@ def create_news_analyst(llm, toolkit):
         
         # 🚨 DashScope/DeepSeek/Zhipu预处理：强制获取新闻数据
         pre_fetched_news = None
-        if ('DashScope' in llm.__class__.__name__ 
+        import os
+        news_preprocess_enabled = os.getenv("NEWS_ANALYST_LLM_PREPROCESS_ENABLED", "true").lower() == "true"
+        if (news_preprocess_enabled
+            and ('DashScope' in llm.__class__.__name__ 
             or 'DeepSeek' in llm.__class__.__name__
             or 'Zhipu' in llm.__class__.__name__
-            ):
+            )):
             logger.warning(f"[新闻分析师] 🚨 检测到{llm.__class__.__name__}模型，启动预处理强制新闻获取...")
             try:
                 # 强制预先获取新闻数据

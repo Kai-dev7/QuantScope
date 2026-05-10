@@ -4,6 +4,7 @@ import json
 
 # 导入统一日志系统
 from tradingagents.utils.logging_init import get_logger
+from tradingagents.agents.utils.llm_resilience import invoke_llm_with_fallback, log_prompt_stats
 logger = get_logger("default")
 
 
@@ -116,9 +117,23 @@ def create_bear_researcher(llm, memory):
 请确保所有回答都使用中文。
 """
 
-        response = llm.invoke(prompt)
+        log_prompt_stats("Bear Researcher", prompt)
+        fallback = f"""看跌研究员降级输出：本轮调用模型服务时发生连接失败，流程将继续使用已有分析资料。
 
-        argument = f"Bear Analyst: {response.content}"
+基于当前已完成的市场、情绪、新闻和基本面报告，{company_name} 的看跌观点仍应重点关注：
+1. 基本面报告中可能存在的估值偏高、盈利波动、负债或现金流压力。
+2. 市场研究报告中的阻力位、趋势转弱或成交量异常。
+3. 新闻与情绪报告中可能压制风险偏好的负面因素。
+
+注意：该段为连接失败后的保守降级内容，不等同于完整空头论证，后续投资经理应降低对本轮空头发言的权重。"""
+        response_content = invoke_llm_with_fallback(
+            node_name="Bear Researcher",
+            llm=llm,
+            prompt=prompt,
+            fallback_content=fallback,
+        )
+
+        argument = f"Bear Analyst: {response_content}"
 
         new_count = investment_debate_state["count"] + 1
         logger.info(f"🐻 [空头研究员] 发言完成，计数: {investment_debate_state['count']} -> {new_count}")

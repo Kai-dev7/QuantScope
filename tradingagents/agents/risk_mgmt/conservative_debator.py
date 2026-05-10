@@ -4,6 +4,7 @@ import json
 
 # 导入统一日志系统
 from tradingagents.utils.logging_init import get_logger
+from tradingagents.agents.utils.llm_resilience import invoke_llm_with_fallback
 logger = get_logger("default")
 
 
@@ -54,12 +55,18 @@ def create_safe_debator(llm):
         logger.info(f"⏱️ [Safe Analyst] 开始调用LLM...")
         llm_start_time = time.time()
 
-        response = llm.invoke(prompt)
+        fallback = """Safe Analyst: 保守风险分析师降级输出：模型服务连接失败，本轮采用保守风控观点。建议后续风险经理优先控制仓位、设置止损、避免在自动分析链不稳定时扩大风险敞口。"""
+        response_content = invoke_llm_with_fallback(
+            node_name="Safe Analyst",
+            llm=llm,
+            prompt=prompt,
+            fallback_content=fallback,
+        )
 
         llm_elapsed = time.time() - llm_start_time
         logger.info(f"⏱️ [Safe Analyst] LLM调用完成，耗时: {llm_elapsed:.2f}秒")
 
-        argument = f"Safe Analyst: {response.content}"
+        argument = response_content if response_content.startswith("Safe Analyst:") else f"Safe Analyst: {response_content}"
 
         new_count = risk_debate_state["count"] + 1
         logger.info(f"🛡️ [保守风险分析师] 发言完成，计数: {risk_debate_state['count']} -> {new_count}")
