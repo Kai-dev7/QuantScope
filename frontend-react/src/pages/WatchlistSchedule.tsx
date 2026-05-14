@@ -5,6 +5,7 @@ import { toast } from 'sonner'
 import {
   BarChart3,
   CalendarClock,
+  Loader2,
   Play,
   Plus,
   Search,
@@ -42,6 +43,10 @@ export default function WatchlistSchedule() {
   const queryClient = useQueryClient()
   const [tab, setTab] = useState<'watchlist' | 'schedule'>('watchlist')
   const [recentlyCreated, setRecentlyCreated] = useState(false)
+  const [activePlanAction, setActivePlanAction] = useState<{
+    planId: string
+    action: 'run' | 'toggle' | 'delete'
+  } | null>(null)
   const [search, setSearch] = useState('')
   const [form, setForm] = useState({
     stock_code: '',
@@ -126,30 +131,46 @@ export default function WatchlistSchedule() {
   const updatePlan = useMutation({
     mutationFn: ({ planId, payload }: { planId: string; payload: Partial<ScheduledAnalysisPayload> }) =>
       scheduledAnalysisApi.update(planId, payload),
-    onSuccess: () => {
-      toast.success('计划已更新')
+    onMutate: ({ planId }) => {
+      setActivePlanAction({ planId, action: 'toggle' })
+      toast.message('正在更新计划状态...')
+    },
+    onSuccess: (_data, variables) => {
+      toast.success(variables.payload.enabled ? '计划已启用' : '计划已停用')
       queryClient.invalidateQueries({ queryKey: ['scheduled-analysis-plans'] })
     },
-    onError: () => toast.error('更新计划失败'),
+    onError: (error: any) => toast.error(error.response?.data?.detail || '更新计划失败'),
+    onSettled: () => setActivePlanAction(null),
   })
 
   const deletePlan = useMutation({
     mutationFn: scheduledAnalysisApi.remove,
+    onMutate: (planId) => {
+      setActivePlanAction({ planId, action: 'delete' })
+      toast.message('正在删除计划...')
+    },
     onSuccess: () => {
       toast.success('计划已删除')
       queryClient.invalidateQueries({ queryKey: ['scheduled-analysis-plans'] })
     },
-    onError: () => toast.error('删除计划失败'),
+    onError: (error: any) => toast.error(error.response?.data?.detail || '删除计划失败'),
+    onSettled: () => setActivePlanAction(null),
   })
 
   const runPlan = useMutation({
     mutationFn: scheduledAnalysisApi.runNow,
-    onSuccess: () => {
-      toast.success('已提交分析任务')
+    onMutate: (planId) => {
+      setActivePlanAction({ planId, action: 'run' })
+      toast.message('正在提交分析任务...')
+    },
+    onSuccess: (data: any) => {
+      const taskId = data?.data?.task_id
+      toast.success(taskId ? `已提交分析任务：${taskId.slice(0, 8)}` : '已提交分析任务')
       queryClient.invalidateQueries({ queryKey: ['scheduled-analysis-plans'] })
       queryClient.invalidateQueries({ queryKey: ['tasks'] })
     },
-    onError: () => toast.error('提交分析任务失败'),
+    onError: (error: any) => toast.error(error.response?.data?.detail || '提交分析任务失败'),
+    onSettled: () => setActivePlanAction(null),
   })
 
   const filteredFavorites = useMemo(() => {
@@ -462,6 +483,7 @@ export default function WatchlistSchedule() {
             ) : (
               <div className="divide-y divide-white/5">
                 {plans.map((plan) => {
+                const runningAction = activePlanAction?.planId === plan.plan_id ? activePlanAction.action : null
                 return (
                   <div key={plan.plan_id} className="flex flex-col gap-3 py-4 lg:flex-row lg:items-center lg:justify-between">
                     <div>
@@ -490,25 +512,29 @@ export default function WatchlistSchedule() {
                       <button
                         type="button"
                         onClick={() => runPlan.mutate(plan.plan_id)}
-                        className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white/70 transition hover:bg-white/10"
+                        disabled={!!activePlanAction}
+                        className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white/70 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
                       >
-                        <Play className="h-4 w-4" />
-                        立即运行
+                        {runningAction === 'run' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+                        {runningAction === 'run' ? '提交中' : '立即运行'}
                       </button>
                       <button
                         type="button"
                         onClick={() => updatePlan.mutate({ planId: plan.plan_id, payload: { enabled: !plan.enabled } })}
-                        className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white/70 transition hover:bg-white/10"
+                        disabled={!!activePlanAction}
+                        className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white/70 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
                       >
-                        {plan.enabled ? '停用' : '启用'}
+                        {runningAction === 'toggle' ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                        {runningAction === 'toggle' ? '更新中' : plan.enabled ? '停用' : '启用'}
                       </button>
                       <button
                         type="button"
                         onClick={() => deletePlan.mutate(plan.plan_id)}
-                        className="inline-flex items-center gap-2 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-300 transition hover:bg-red-500/20"
+                        disabled={!!activePlanAction}
+                        className="inline-flex items-center gap-2 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-300 transition hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-50"
                       >
-                        <Trash2 className="h-4 w-4" />
-                        删除
+                        {runningAction === 'delete' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                        {runningAction === 'delete' ? '删除中' : '删除'}
                       </button>
                     </div>
                   </div>
