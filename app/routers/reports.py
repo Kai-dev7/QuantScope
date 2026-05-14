@@ -140,8 +140,10 @@ async def get_reports_list(
         if search_keyword:
             query["$or"] = [
                 {"stock_symbol": {"$regex": search_keyword, "$options": "i"}},
+                {"stock_name": {"$regex": search_keyword, "$options": "i"}},
                 {"analysis_id": {"$regex": search_keyword, "$options": "i"}},
-                {"summary": {"$regex": search_keyword, "$options": "i"}}
+                {"summary": {"$regex": search_keyword, "$options": "i"}},
+                {"recommendation": {"$regex": search_keyword, "$options": "i"}}
             ]
 
         # 市场筛选

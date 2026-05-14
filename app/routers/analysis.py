@@ -15,6 +15,7 @@ import asyncio
 from app.routers.auth_db import get_current_user
 from app.services.queue_service import get_queue_service, QueueService
 from app.services.analysis_service import get_analysis_service
+from app.core.database import get_mongo_db
 from app.services.simple_analysis_service import get_simple_analysis_service
 from app.services.websocket_manager import get_websocket_manager
 from app.services.stock_extraction_service import stock_extraction_service
@@ -737,6 +738,33 @@ async def get_task_result(
         logger.error(f"❌ [RESULT] 获取任务结果失败: {e}")
         raise HTTPException(status_code=400, detail=str(e))
 
+
+@router.post("/tasks/{task_id}/retry", response_model=Dict[str, Any])
+async def retry_failed_task(
+    task_id: str,
+    resume_from_checkpoint: bool = Query(default=True, description="是否从最新 checkpoint 断点续跑"),
+    user: dict = Depends(get_current_user),
+):
+    """重试失败任务。默认优先从最新 session checkpoint 续跑。"""
+    try:
+        analysis_service = get_simple_analysis_service()
+        result = await analysis_service.retry_failed_task(
+            task_id,
+            user["id"],
+            resume_from_checkpoint=resume_from_checkpoint,
+        )
+        return {
+            "success": True,
+            "data": result,
+            "message": result.get("message", "任务已重新加入队列"),
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"❌ 重试任务失败: {task_id} - {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/tasks/all", response_model=Dict[str, Any])
 async def list_all_tasks(
     user: dict = Depends(get_current_user),
@@ -767,6 +795,48 @@ async def list_all_tasks(
 
     except Exception as e:
         logger.error(f"❌ 获取任务列表失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/dashboard/stats", response_model=Dict[str, Any])
+async def get_dashboard_stats(
+    user: dict = Depends(get_current_user)
+):
+    """获取作战总览轻量统计数据。"""
+    try:
+        db = get_mongo_db()
+
+        task_counts = {
+            "total": 0,
+            "completed": 0,
+            "failed": 0,
+        }
+
+        async for row in db.analysis_tasks.aggregate([
+            {"$group": {"_id": "$status", "count": {"$sum": 1}}}
+        ]):
+            status = str(row.get("_id") or "")
+            count = int(row.get("count") or 0)
+            task_counts["total"] += count
+
+            if status == "completed":
+                task_counts["completed"] += count
+            elif status == "failed":
+                task_counts["failed"] += count
+
+        report_count = await db.analysis_reports.estimated_document_count()
+
+        return {
+            "success": True,
+            "data": {
+                "total_analyses": task_counts["total"],
+                "successful_analyses": task_counts["completed"],
+                "failed_analyses": task_counts["failed"],
+                "report_count": int(report_count or 0),
+            },
+            "message": "统计数据获取成功"
+        }
+    except Exception as e:
+        logger.error(f"❌ 获取作战总览统计失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/tasks", response_model=Dict[str, Any])
