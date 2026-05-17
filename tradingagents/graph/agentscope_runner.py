@@ -153,6 +153,65 @@ class AgentScopeRunner:
             toolkit.config.get("parallel_analyst_max_workers", 4)
         )
 
+    def _build_recoverable_state(
+        self,
+        state: Dict[str, Any],
+        completed_nodes: set[str],
+    ) -> Dict[str, Any]:
+        """Persist only BSON-safe state needed to resume at node boundaries."""
+        keys = [
+            "company_of_interest",
+            "trade_date",
+            "planner_plan",
+            "focus_hint",
+            "skill_name",
+            "skill_tool_policy",
+            "judge_feedback",
+            "judge_scores",
+            "market_report",
+            "sentiment_report",
+            "news_report",
+            "fundamentals_report",
+            "investment_debate_state",
+            "investment_plan",
+            "trader_investment_plan",
+            "risk_debate_state",
+            "final_trade_decision",
+            "market_tool_call_count",
+            "news_tool_call_count",
+            "sentiment_tool_call_count",
+            "fundamentals_tool_call_count",
+        ]
+        recoverable = {key: state.get(key) for key in keys if key in state}
+        recoverable["completed_nodes"] = sorted(completed_nodes)
+        recoverable["messages_count"] = len(state.get("messages", []))
+        return recoverable
+
+    def _checkpoint_state(
+        self,
+        *,
+        session_id: str,
+        state: Dict[str, Any],
+        completed_nodes: set[str],
+        node_name: str,
+        last_event_seq: int,
+        mode: str = "",
+    ) -> None:
+        state_summary = {
+            "node_name": node_name,
+            "last_event_seq": int(last_event_seq),
+            "completed_nodes": sorted(completed_nodes),
+        }
+        if mode:
+            state_summary["mode"] = mode
+        session_runtime_service.checkpoint_sync(
+            session_id,
+            state_summary=state_summary,
+            recoverable_state=self._build_recoverable_state(state, completed_nodes),
+            checkpoint_id=f"{node_name.lower().replace(' ', '_')}_{int(time.time() * 1000)}",
+            created_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
+        )
+
     def _apply_judge_feedback(self, state: Dict[str, Any], node_name: str, feedback: Dict[str, Any]) -> Dict[str, Any]:
         target = JUDGE_TARGETS.get(node_name)
         if not target:
@@ -366,20 +425,13 @@ class AgentScopeRunner:
                     source="runtime",
                 )
                 try:
-                    session_runtime_service.checkpoint_sync(
-                        session_id,
-                        state_summary={
-                            "node_name": node_name,
-                            "last_event_seq": int(completed_event.get("seq", 0)),
-                            "mode": "parallel",
-                        },
-                        recoverable_state={
-                            "messages_count": len(local_state.get("messages", [])),
-                            "judge_feedback": dict(local_state.get("judge_feedback", {}) or {}),
-                            "judge_scores": dict(local_state.get("judge_scores", {}) or {}),
-                        },
-                        checkpoint_id=f"{node_name.lower().replace(' ', '_')}_{int(time.time() * 1000)}",
-                        created_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
+                    self._checkpoint_state(
+                        session_id=session_id,
+                        state=local_state,
+                        completed_nodes={analyst_key},
+                        node_name=node_name,
+                        last_event_seq=int(completed_event.get("seq", 0)),
+                        mode="parallel",
                     )
                 except Exception:
                     pass
@@ -452,8 +504,19 @@ class AgentScopeRunner:
         init_state: Dict[str, Any],
         selected_analysts: List[str],
         progress_sender: Optional[Callable[[str], None]] = None,
+        resume_state: Optional[Dict[str, Any]] = None,
     ) -> tuple[Dict[str, Any], Dict[str, float]]:
-        state = init_state
+        state = dict(init_state)
+        resume_state = resume_state or {}
+        completed_nodes = set(resume_state.get("completed_nodes", []))
+        resume_enabled = bool(resume_state)
+        if resume_state:
+            for key, value in resume_state.items():
+                if key == "completed_nodes":
+                    continue
+                if key == "messages_count":
+                    continue
+                state[key] = value
         node_timings: Dict[str, float] = {}
 
         def run_agent(node_name: str, node_func, send_progress: bool = True):
@@ -525,20 +588,14 @@ class AgentScopeRunner:
                     node_name=node_name,
                     source="runtime",
                 )
+                completed_nodes.add(node_name)
                 try:
-                    session_runtime_service.checkpoint_sync(
-                        session_id,
-                        state_summary={
-                            "node_name": node_name,
-                            "last_event_seq": int(node_completed_event.get("seq", 0)),
-                        },
-                        recoverable_state={
-                            "messages_count": len(state.get("messages", [])),
-                            "judge_feedback": dict(state.get("judge_feedback", {}) or {}),
-                            "judge_scores": dict(state.get("judge_scores", {}) or {}),
-                        },
-                        checkpoint_id=f"{node_name.lower().replace(' ', '_')}_{int(time.time() * 1000)}",
-                        created_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
+                    self._checkpoint_state(
+                        session_id=session_id,
+                        state=state,
+                        completed_nodes=completed_nodes,
+                        node_name=node_name,
+                        last_event_seq=int(node_completed_event.get("seq", 0)),
                     )
                 except Exception:
                     pass
@@ -559,6 +616,11 @@ class AgentScopeRunner:
 
         parallel_analysts = [key for key in selected_analysts if key in {"market", "social", "news", "fundamentals"}]
         sequential_analysts = [key for key in selected_analysts if key not in {"market", "social", "news", "fundamentals"}]
+        completed_analysts = {
+            key
+            for key, report_key in ANALYST_REPORT_KEYS.items()
+            if isinstance(state.get(report_key), str) and len(state.get(report_key, "").strip()) > 100
+        }
 
         if self.parallel_analyst_pipeline_enabled and len(parallel_analysts) > 1:
             analyst_states: Dict[str, Dict[str, Any]] = {}
@@ -568,14 +630,16 @@ class AgentScopeRunner:
                     handler=lambda local_state, key=analyst_key: self._run_single_analyst(key, local_state),
                 )
                 for analyst_key in parallel_analysts[: self.parallel_analyst_max_workers]
+                if analyst_key not in completed_analysts
             ]
-            asyncio.run(
-                run_agentscope_fanout(
-                    name="analyst-stage",
-                    agents=agents,
-                    state=state,
+            if agents:
+                asyncio.run(
+                    run_agentscope_fanout(
+                        name="analyst-stage",
+                        agents=agents,
+                        state=state,
+                    )
                 )
-            )
             agent_messages: List[Dict[str, Any]] = []
             for agent in agents:
                 if agent.last_result is None:
@@ -583,6 +647,8 @@ class AgentScopeRunner:
                 analyst_state, timings = agent.last_result
                 analyst_state["node_timings"] = timings
                 analyst_states[agent.name] = analyst_state
+                completed_nodes.add(agent.name)
+                completed_analysts.add(agent.name)
                 agent_messages.append(
                     {
                         "topic": "agent_completed",
@@ -598,11 +664,33 @@ class AgentScopeRunner:
 
             state = self._merge_parallel_analyst_state(state, analyst_states, agent_messages)
             node_timings.update(state.get("node_timings", {}) or {})
+            session_id = str(state.get("session_id", "") or "")
+            if session_id and agents:
+                try:
+                    checkpoint_event = session_event_store.append_event_sync(
+                        session_id,
+                        "stage_completed",
+                        {"stage": "analyst_fanout", "completed_nodes": sorted(completed_nodes)},
+                        node_name="Analyst Fanout",
+                        source="runtime",
+                    )
+                    self._checkpoint_state(
+                        session_id=session_id,
+                        state=state,
+                        completed_nodes=completed_nodes,
+                        node_name="Analyst Fanout",
+                        last_event_seq=int(checkpoint_event.get("seq", 0)),
+                        mode="parallel",
+                    )
+                except Exception:
+                    pass
             sequential_analysts = sequential_analysts + [
                 key for key in parallel_analysts[self.parallel_analyst_max_workers :]
             ]
         else:
             for analyst_key in parallel_analysts:
+                if analyst_key in completed_analysts:
+                    continue
                 analyst_node = self.analyst_nodes[analyst_key]
                 analyst_name = f"{analyst_key.capitalize()} Analyst"
                 run_agent(analyst_name, analyst_node)
@@ -618,8 +706,11 @@ class AgentScopeRunner:
                     if next_step.startswith("Msg Clear"):
                         run_msg_clear(next_step)
                     break
+                completed_nodes.add(analyst_key)
 
         for analyst_key in sequential_analysts:
+            if analyst_key in completed_analysts:
+                continue
             analyst_node = self.analyst_nodes[analyst_key]
             analyst_name = f"{analyst_key.capitalize()} Analyst"
             run_agent(analyst_name, analyst_node)
@@ -635,44 +726,65 @@ class AgentScopeRunner:
                 if next_step.startswith("Msg Clear"):
                     run_msg_clear(next_step)
                 break
+            completed_nodes.add(analyst_key)
 
         # Research debate
-        next_node = "Bull Researcher"
-        while True:
-            if next_node == "Bull Researcher":
-                run_agent(next_node, self.bull_researcher)
-            elif next_node == "Bear Researcher":
-                run_agent(next_node, self.bear_researcher)
-            elif next_node == "Research Manager":
-                run_agent(next_node, self.research_manager)
-                break
+        if resume_enabled and state.get("investment_plan"):
+            completed_nodes.add("Research Manager")
+        if resume_enabled and state.get("trader_investment_plan"):
+            completed_nodes.add("Trader")
+        if resume_enabled and state.get("final_trade_decision"):
+            completed_nodes.add("Risk Judge")
 
-            next_node = self.conditional_logic.should_continue_debate(state)
-            if next_node == "Research Manager":
-                run_agent(next_node, self.research_manager)
-                break
+        if "Research Manager" not in completed_nodes:
+            debate_state = state.get("investment_debate_state", {}) or {}
+            next_node = (
+                self.conditional_logic.should_continue_debate(state)
+                if resume_enabled and int(debate_state.get("count", 0) or 0) > 0
+                else "Bull Researcher"
+            )
+            while True:
+                if next_node == "Bull Researcher":
+                    run_agent(next_node, self.bull_researcher)
+                elif next_node == "Bear Researcher":
+                    run_agent(next_node, self.bear_researcher)
+                elif next_node == "Research Manager":
+                    run_agent(next_node, self.research_manager)
+                    break
+
+                next_node = self.conditional_logic.should_continue_debate(state)
+                if next_node == "Research Manager":
+                    run_agent(next_node, self.research_manager)
+                    break
 
         # Trader
-        run_agent("Trader", self.trader)
+        if "Trader" not in completed_nodes:
+            run_agent("Trader", self.trader)
 
         # Risk management
-        next_node = "Risky Analyst"
-        while True:
-            if next_node == "Risk Judge":
-                run_agent(next_node, self.risk_manager)
-                break
+        if "Risk Judge" not in completed_nodes:
+            risk_state = state.get("risk_debate_state", {}) or {}
+            next_node = (
+                self.conditional_logic.should_continue_risk_analysis(state)
+                if resume_enabled and int(risk_state.get("count", 0) or 0) > 0
+                else "Risky Analyst"
+            )
+            while True:
+                if next_node == "Risk Judge":
+                    run_agent(next_node, self.risk_manager)
+                    break
 
-            if next_node == "Risky Analyst":
-                run_agent(next_node, self.risky_analyst)
-            elif next_node == "Safe Analyst":
-                run_agent(next_node, self.safe_analyst)
-            elif next_node == "Neutral Analyst":
-                run_agent(next_node, self.neutral_analyst)
+                if next_node == "Risky Analyst":
+                    run_agent(next_node, self.risky_analyst)
+                elif next_node == "Safe Analyst":
+                    run_agent(next_node, self.safe_analyst)
+                elif next_node == "Neutral Analyst":
+                    run_agent(next_node, self.neutral_analyst)
 
-            next_node = self.conditional_logic.should_continue_risk_analysis(state)
-            if next_node == "Risk Judge":
-                run_agent(next_node, self.risk_manager)
-                break
+                next_node = self.conditional_logic.should_continue_risk_analysis(state)
+                if next_node == "Risk Judge":
+                    run_agent(next_node, self.risk_manager)
+                    break
 
         if progress_sender:
             progress_sender("__end__")

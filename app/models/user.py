@@ -53,6 +53,7 @@ class UserPreferences(BaseModel):
     # 通知设置
     notifications_enabled: bool = True
     email_notifications: bool = False
+    scheduled_report_email_enabled: bool = True
     desktop_notifications: bool = True
     analysis_complete_notification: bool = True
     system_maintenance_notification: bool = True

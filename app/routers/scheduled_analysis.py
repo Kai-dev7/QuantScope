@@ -152,6 +152,7 @@ async def run_scheduled_analysis_now(
             market_type=plan.get("market_type", "A股"),
             research_depth=plan.get("research_depth", "标准"),
         ),
+        source="scheduled",
     )
 
     service = get_simple_analysis_service()

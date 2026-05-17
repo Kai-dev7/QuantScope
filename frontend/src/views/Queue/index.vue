@@ -330,8 +330,26 @@ const cancelTask = async (task: any) => {
   }
 }
 
-const retryTask = (task: any) => {
-  ElMessage.success(`任务 ${task.task_id} 已重新加入队列`)
+const retryTask = async (task: any) => {
+  try {
+    await ElMessageBox.confirm(
+      `确定要从最近的断点重试任务 ${task.task_id} 吗？`,
+      '确认重试',
+      {
+        confirmButtonText: '断点续跑',
+        cancelButtonText: '取消',
+        type: 'warning'
+      }
+    )
+
+    const res = await analysisApi.retryTask(task.task_id, true)
+    const data = res?.data?.data ?? {}
+    ElMessage.success(data?.resume_from_checkpoint ? '任务已从断点继续执行' : '未找到断点，任务已重新执行')
+    await refreshQueue()
+  } catch (error: any) {
+    if (error === 'cancel' || error === 'close') return
+    ElMessage.error(error?.response?.data?.detail || '重试任务失败')
+  }
 }
 
 const viewResult = async (task: any) => {

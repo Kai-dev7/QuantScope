@@ -889,6 +889,7 @@ class TradingAgentsGraph:
         task_id=None,
         planner_plan=None,
         focus_hint=None,
+        resume_state=None,
     ):
         """Run the trading agents graph for a company on a specific date.
 
@@ -905,6 +906,7 @@ class TradingAgentsGraph:
             task_id=task_id,
             planner_plan=planner_plan,
             focus_hint=focus_hint,
+            resume_state=resume_state,
         )
 
     def _propagate_agentscope(
@@ -915,6 +917,7 @@ class TradingAgentsGraph:
         task_id=None,
         planner_plan=None,
         focus_hint=None,
+        resume_state=None,
     ):
         """Run the trading agents flow using AgentScope."""
         logger.debug(f"🔍 [AGENTSCOPE] ===== TradingAgentsGraph._propagate_agentscope 接收参数 =====")
@@ -951,6 +954,7 @@ class TradingAgentsGraph:
             init_agent_state,
             selected_analysts=self.selected_analysts,
             progress_sender=progress_sender,
+            resume_state=resume_state,
         )
 
         total_elapsed = time.time() - total_start_time

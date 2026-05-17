@@ -21,11 +21,11 @@ const routes: RouteRecordRaw[] = [
     path: '/',
     redirect: '/dashboard'
   },
-  // 兼容文档链接：将 /paper/<name>.md 重定向到学习中心文章路由
+  // 兼容文档链接（已移除研究学院，重定向到报告页面）
   {
     path: '/paper/:name.md',
     name: 'PaperMdRedirect',
-    redirect: (to) => `/learning/article/${to.params.name as string}`,
+    redirect: '/reports',
     meta: { title: '文档跳转', hideInMenu: true, requiresAuth: false }
   },
   {
@@ -110,46 +110,6 @@ const routes: RouteRecordRaw[] = [
         meta: {
           title: '观察池',
           requiresAuth: true
-        }
-      }
-    ]
-  },
-  {
-    path: '/learning',
-    name: 'Learning',
-    component: () => import('@/layouts/BasicLayout.vue'),
-    meta: {
-      title: '研究学院',
-      icon: 'Reading',
-      requiresAuth: false,
-      transition: 'fade'
-    },
-    children: [
-      {
-        path: '',
-        name: 'LearningHome',
-        component: () => import('@/views/Learning/index.vue'),
-        meta: {
-          title: '研究学院',
-          requiresAuth: false
-        }
-      },
-      {
-        path: ':category',
-        name: 'LearningCategory',
-        component: () => import('@/views/Learning/Category.vue'),
-        meta: {
-          title: '研究专题',
-          requiresAuth: false
-        }
-      },
-      {
-        path: 'article/:id',
-        name: 'LearningArticle',
-        component: () => import('@/views/Learning/Article.vue'),
-        meta: {
-          title: '专题详情',
-          requiresAuth: false
         }
       }
     ]

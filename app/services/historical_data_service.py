@@ -414,8 +414,8 @@ class HistoricalDataService:
             if period:
                 query["period"] = period
             
-            # 执行查询
-            cursor = self.collection.find(query).sort("trade_date", -1)
+            # 执行查询，排除 _id (ObjectId 不可序列化)
+            cursor = self.collection.find(query, {'_id': 0}).sort("trade_date", -1)
             
             if limit:
                 cursor = cursor.limit(limit)

@@ -39,7 +39,13 @@ function MarketOverview() {
     retry: false,
   })
 
-  const indices = overviewData?.indices || []
+  const groups = overviewData?.markets || []
+  const fallbackIndices = overviewData?.indices || []
+  const visibleGroups = groups.length > 0
+    ? groups
+    : fallbackIndices.length > 0
+      ? [{ market: 'A股', indices: fallbackIndices.map(item => ({ ...item, market: 'A股' })) }]
+      : []
 
   return (
     <div className="space-y-3">
@@ -61,15 +67,25 @@ function MarketOverview() {
           </span>
         )}
       </div>
-      {indices.length > 0 ? (
-        <div className="grid grid-cols-2 gap-2">
-          {indices.map(idx => (
-            <div key={idx.code} className="bg-white/5 rounded-xl p-3 border border-white/5">
-              <p className="text-white/50 text-xs">{idx.name}</p>
-              <p className="text-white font-semibold text-lg mt-0.5">{idx.price.toFixed(2)}</p>
-              <p className={`text-xs mt-0.5 ${idx.up ? 'text-green-400' : 'text-red-400'}`}>
-                {idx.change >= 0 ? '+' : ''}{idx.change.toFixed(2)}% {idx.up ? '▲' : '▼'}
-              </p>
+      {visibleGroups.length > 0 ? (
+        <div className="space-y-4">
+          {visibleGroups.map(group => (
+            <div key={group.market} className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium text-white/45">{group.market}</span>
+                <span className="text-xs text-white/25">{group.indices.length} 项</span>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                {group.indices.map(idx => (
+                  <div key={`${group.market}-${idx.code}`} className="bg-white/5 rounded-xl p-3 border border-white/5">
+                    <p className="text-white/50 text-xs">{idx.name}</p>
+                    <p className="text-white font-semibold text-lg mt-0.5">{idx.price.toFixed(2)}</p>
+                    <p className={`text-xs mt-0.5 ${idx.up ? 'text-green-400' : 'text-red-400'}`}>
+                      {idx.change >= 0 ? '+' : ''}{idx.change.toFixed(2)}% {idx.up ? '▲' : '▼'}
+                    </p>
+                  </div>
+                ))}
+              </div>
             </div>
           ))}
         </div>

@@ -8,21 +8,21 @@ import { Zap, Eye, EyeOff } from 'lucide-react'
 export default function Login() {
   const navigate = useNavigate()
   const { setToken } = useAuthStore()
-  const [username, setUsername] = useState('')
+  const [account, setAccount] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [loading, setLoading] = useState(false)
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!username || !password) {
-      toast.error('请输入用户名和密码')
+    if (!account || !password) {
+      toast.error('请输入邮箱/用户名和密码')
       return
     }
 
     setLoading(true)
     try {
-      const data = await authApi.login(username, password)
+      const data = await authApi.login(account, password)
       // Backend wraps token in {success, data: {access_token, ...}}
       setToken(data.data?.access_token)
       toast.success('登录成功')
@@ -61,13 +61,13 @@ export default function Login() {
           {/* Form */}
           <form onSubmit={handleLogin} className="space-y-4">
             <div>
-              <label className="block text-sm text-white/60 mb-2">用户名</label>
+              <label className="block text-sm text-white/60 mb-2">邮箱 / 用户名</label>
               <input
                 type="text"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
+                value={account}
+                onChange={(e) => setAccount(e.target.value)}
                 className="w-full px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white placeholder-white/30 focus:outline-none focus:border-blue-500/50 focus:bg-white/10 transition-all"
-                placeholder="请输入用户名"
+                placeholder="请输入邮箱或用户名"
               />
             </div>
 
@@ -102,7 +102,7 @@ export default function Login() {
 
           {/* Footer */}
           <p className="text-center text-white/30 text-xs mt-6">
-            默认账号: admin / admin
+            支持邮箱或用户名登录
           </p>
         </div>
       </div>

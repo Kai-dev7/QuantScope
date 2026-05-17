@@ -4,6 +4,7 @@ K线图数据API
 专门为前端K线图组件提供数据
 """
 import logging
+import asyncio
 from datetime import datetime, timedelta
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
@@ -35,6 +36,30 @@ class KLineResponse(BaseModel):
     records: list[KLineRecord]
     count: int
     period: str
+
+
+class MarketOverviewItem(BaseModel):
+    """单个指数/市场指标"""
+    name: str
+    code: str
+    price: float
+    change: float
+    up: bool
+    market: str
+
+
+class MarketOverviewGroup(BaseModel):
+    """按市场分组的概览数据"""
+    market: str
+    indices: list[MarketOverviewItem]
+
+
+class MarketOverviewResponse(BaseModel):
+    """市场概览响应"""
+    success: bool
+    markets: list[MarketOverviewGroup]
+    indices: list[MarketOverviewItem]
+    updated_at: str
 
 
 def _fetch_from_baostock(symbol: str, limit: int) -> list[dict]:
@@ -159,27 +184,89 @@ def _fetch_from_akshare_realtime(symbol: str) -> Optional[dict]:
     return None
 
 
-@router.get("/overview")
+def _fetch_index_snapshot_from_yfinance(name: str, code: str, market: str) -> Optional[dict]:
+    """使用 yfinance 获取指数快照。"""
+    try:
+        import yfinance as yf
+    except Exception as exc:
+        logger.warning(f"yfinance not available for {code}: {exc}")
+        return None
+
+    try:
+        hist = yf.Ticker(code).history(period="5d", interval="1d", auto_adjust=False)
+        if hist is None or hist.empty:
+            return None
+
+        latest = hist.iloc[-1]
+        prev = hist.iloc[-2] if len(hist) >= 2 else None
+        close = float(latest.get("Close") or 0)
+        if prev is not None and prev.get("Close"):
+            prev_close = float(prev.get("Close") or 0)
+            change = round((close - prev_close) / prev_close * 100, 2) if prev_close > 0 else 0.0
+        else:
+            change = 0.0
+
+        return {
+            "name": name,
+            "code": code,
+            "price": round(close, 2),
+            "change": change,
+            "up": change >= 0,
+            "market": market,
+        }
+    except Exception as exc:
+        logger.warning(f"Failed to fetch index snapshot from yfinance for {code}: {exc}")
+        return None
+
+
+async def _fetch_index_snapshot_async(name: str, code: str, market: str) -> Optional[dict]:
+    """异步获取指数快照，避免阻塞首页接口。"""
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(_fetch_index_snapshot_from_yfinance, name, code, market),
+            timeout=6,
+        )
+    except Exception as exc:
+        logger.warning(f"Index snapshot timeout or failed for {code}: {exc}")
+        return None
+
+
+@router.get("/overview", response_model=MarketOverviewResponse)
 async def get_market_overview():
     """
     获取主要指数实时行情
-    数据源: BaoStock（免费，无需token）
+    数据源: BaoStock + yfinance
     """
-    indices = [
-        {"name": "上证指数", "code": "sh.000001"},
-        {"name": "深证成指", "code": "sz.399001"},
-        {"name": "创业板指", "code": "sz.399006"},
-        {"name": "沪深300", "code": "sh.000300"},
-    ]
+    market_indices = {
+        "A股": [
+            {"name": "上证指数", "code": "sh.000001"},
+            {"name": "深证成指", "code": "sz.399001"},
+            {"name": "创业板指", "code": "sz.399006"},
+            {"name": "沪深300", "code": "sh.000300"},
+        ],
+        "港股": [
+            {"name": "恒生指数", "code": "^HSI"},
+            {"name": "恒生中国企业指数", "code": "^HSCE"},
+            {"name": "恒生科技指数", "code": "^HSTECH"},
+        ],
+        "美股": [
+            {"name": "道琼斯指数", "code": "^DJI"},
+            {"name": "纳斯达克指数", "code": "^IXIC"},
+            {"name": "标普500", "code": "^GSPC"},
+        ],
+    }
+
+    grouped_results: list[MarketOverviewGroup] = []
+    flat_results: list[MarketOverviewItem] = []
 
     import baostock as bs
     lg = bs.login()
     if lg.error_code != '0':
         raise HTTPException(status_code=503, detail="Baostock 登录失败")
 
-    results = []
     try:
-        for idx in indices:
+        a_share_items: list[MarketOverviewItem] = []
+        for idx in market_indices["A股"]:
             rs = bs.query_history_k_data_plus(
                 idx["code"],
                 "date,open,high,low,close,volume,amount,pctChg",
@@ -192,22 +279,47 @@ async def get_market_overview():
                 rows.append(rs.get_row_data())
             if rows:
                 latest = rows[-1]
-                price = float(latest[3]) if latest[3] else 0      # close
-                change = float(latest[7]) if latest[7] else 0     # pctChg
-                results.append({
-                    "name": idx["name"],
-                    "code": idx["code"],
-                    "price": round(price, 2),
-                    "change": round(change, 2),
-                    "up": change >= 0,
-                })
+                price = float(latest[3]) if latest[3] else 0
+                change = float(latest[7]) if latest[7] else 0
+                item = MarketOverviewItem(
+                    name=idx["name"],
+                    code=idx["code"],
+                    price=round(price, 2),
+                    change=round(change, 2),
+                    up=change >= 0,
+                    market="A股",
+                )
+                a_share_items.append(item)
+                flat_results.append(item)
+        if a_share_items:
+            grouped_results.append(MarketOverviewGroup(market="A股", indices=a_share_items))
     finally:
         bs.logout()
 
-    if not results:
+    for market_name, items in (("港股", market_indices["港股"]), ("美股", market_indices["美股"])):
+        snapshots = await asyncio.gather(
+            *[_fetch_index_snapshot_async(idx["name"], idx["code"], market_name) for idx in items],
+            return_exceptions=True,
+        )
+        market_results: list[MarketOverviewItem] = []
+        for snapshot in snapshots:
+            if isinstance(snapshot, Exception) or not snapshot:
+                continue
+            item = MarketOverviewItem(**snapshot)
+            market_results.append(item)
+            flat_results.append(item)
+        if market_results:
+            grouped_results.append(MarketOverviewGroup(market=market_name, indices=market_results))
+
+    if not flat_results:
         raise HTTPException(status_code=404, detail="未获取到指数数据")
 
-    return {"success": True, "indices": results, "updated_at": datetime.now().isoformat()}
+    return {
+        "success": True,
+        "markets": grouped_results,
+        "indices": flat_results,
+        "updated_at": datetime.now().isoformat(),
+    }
 
 
 @router.get("/{symbol}", response_model=KLineResponse)

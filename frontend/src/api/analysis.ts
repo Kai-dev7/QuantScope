@@ -222,6 +222,23 @@ export const analysisApi = {
     return request.post(`/api/analysis/tasks/${taskId}/mark-failed`, {})
   },
 
+  // 重试失败任务，默认由后端从最新 checkpoint 断点续跑
+  retryTask(taskId: string, resumeFromCheckpoint = true): Promise<ApiResponse<any>> {
+    return request.post(`/api/analysis/tasks/${taskId}/retry`, {}, {
+      params: { resume_from_checkpoint: resumeFromCheckpoint }
+    })
+  },
+
+  // 获取任务对应的 Session 事件轨迹
+  getSessionEvents(taskId: string): Promise<ApiResponse<any>> {
+    return request.get(`/api/sessions/${taskId}`)
+  },
+
+  // 获取任务最新 checkpoint 和 checkpoint 后事件
+  getSessionRecovery(taskId: string): Promise<ApiResponse<any>> {
+    return request.get(`/api/sessions/${taskId}/recovery`)
+  },
+
   // 删除任务
   deleteTask(taskId: string): Promise<{ success: boolean; message: string }> {
     return request.delete(`/api/analysis/tasks/${taskId}`)
@@ -495,4 +512,3 @@ export const getStockPlaceholder = (market: string): string => {
   }
   return placeholders[market] ?? '输入股票代码'
 }
-

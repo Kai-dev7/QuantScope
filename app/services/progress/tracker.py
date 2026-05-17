@@ -337,6 +337,9 @@ class RedisProgressTracker:
 
             self._save_progress()
             logger.debug(f"[RedisProgress] updated: {self.task_id} - {self.progress_data.get('progress_percentage', 0)}%")
+
+            # 推送 WebSocket 步骤更新
+            self._push_step_update()
             return self.progress_data
         except Exception as e:
             logger.error(f"[RedisProgress] update failed: {self.task_id} - {e}")
@@ -464,11 +467,34 @@ class RedisProgressTracker:
                 'estimated_total_time': self.progress_data.get('estimated_total_time', 0),
                 'progress_percentage': self.progress_data.get('progress_percentage', 0),
                 'status': self.progress_data.get('status', 'pending'),
-                'current_step': self.progress_data.get('current_step')
+                'current_step': self.progress_data.get('current_step'),
+                # 额外字段供 WebSocket 推送使用
+                'current_step_name': self.progress_data.get('current_step_name', ''),
+                'current_step_index': self._detect_current_step_index(),
             }
         except Exception as e:
             logger.error(f"[RedisProgress] to_dict failed: {self.task_id} - {e}")
             return self.progress_data
+
+    def mark_step_completed(self, step_index: int) -> Optional[AnalysisStep]:
+        """显式标记某一步骤为完成（带时间戳），用于 Agent 完成后的主动推送"""
+        if 0 <= step_index < len(self.analysis_steps):
+            step = self.analysis_steps[step_index]
+            if step.status != 'completed':
+                step.status = 'completed'
+                step.end_time = time.time()
+                self._save_progress()
+            # 将下一步设为 current
+            if step_index + 1 < len(self.analysis_steps):
+                next_step = self.analysis_steps[step_index + 1]
+                if next_step.status == 'pending':
+                    next_step.status = 'current'
+                    next_step.start_time = time.time()
+                self.progress_data['current_step'] = step_index + 1
+                self.progress_data['current_step_name'] = next_step.name
+                self._save_progress()
+            return step
+        return None
 
 
 

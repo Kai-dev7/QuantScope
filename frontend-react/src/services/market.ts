@@ -40,10 +40,17 @@ export interface MarketIndex {
   price: number
   change: number
   up: boolean
+  market?: string
+}
+
+export interface MarketOverviewGroup {
+  market: string
+  indices: MarketIndex[]
 }
 
 export interface MarketOverviewResponse {
   success: boolean
+  markets?: MarketOverviewGroup[]
   indices: MarketIndex[]
   updated_at: string
 }

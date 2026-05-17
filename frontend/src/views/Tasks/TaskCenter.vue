@@ -108,6 +108,7 @@
             <el-button v-if="row.status==='completed'" type="text" size="small" @click="openResult(row)">查看结果</el-button>
             <el-button v-if="row.status==='completed'" type="text" size="small" @click="openReport(row)">报告详情</el-button>
             <el-button v-if="row.status==='failed'" type="text" size="small" @click="showErrorDetail(row)">查看错误</el-button>
+            <el-button v-if="row.status==='failed'" type="text" size="small" @click="openEvents(row)">执行轨迹</el-button>
             <el-button v-if="row.status==='failed'" type="text" size="small" @click="retryTask(row)">重试</el-button>
             <el-button v-if="row.status==='processing' || row.status==='running' || row.status==='pending'" type="text" size="small" @click="markAsFailed(row)">标记失败</el-button>
             <el-button type="text" size="small" @click="deleteTask(row)" style="color: #f56c6c;">删除</el-button>
@@ -139,6 +140,142 @@
 
     <!-- 报告详情弹窗组件化（预留） -->
     <TaskReportDialog v-model="reportVisible" :sections="reportSections" @close="reportVisible=false" />
+
+    <el-dialog
+      v-model="eventsVisible"
+      width="1120px"
+      class="events-dialog"
+      :show-close="false"
+      destroy-on-close
+    >
+      <template #header>
+        <div class="events-hero">
+          <div>
+            <div class="eyebrow">Runtime Trace</div>
+            <h2>失败任务执行轨迹</h2>
+            <p>{{ currentEventTask?.stock_name || currentEventTask?.stock_code || '-' }} · {{ currentEventTask?.task_id || '-' }}</p>
+          </div>
+          <div class="hero-actions">
+            <el-tag :type="getStatusType(currentEventTask?.status || 'failed')" effect="dark">
+              {{ getStatusText(currentEventTask?.status || 'failed') }}
+            </el-tag>
+            <el-button circle @click="eventsVisible=false">×</el-button>
+          </div>
+        </div>
+      </template>
+
+      <div v-loading="eventsLoading" class="events-shell">
+        <section class="trace-summary">
+          <div class="metric-card danger">
+            <span class="label">事件数</span>
+            <strong>{{ sessionEvents.length }}</strong>
+            <small>按 seq 顺序记录</small>
+          </div>
+          <div class="metric-card">
+            <span class="label">最后事件</span>
+            <strong>{{ latestEvent?.event_type || '-' }}</strong>
+            <small>{{ formatTime(latestEvent?.timestamp) }}</small>
+          </div>
+          <div class="metric-card">
+            <span class="label">最近 Checkpoint</span>
+            <strong>{{ recoveryPayload?.checkpoint?.checkpoint_id ? '存在' : '无' }}</strong>
+            <small>{{ recoveryPayload?.checkpoint?.state_summary?.node_name || '未记录节点' }}</small>
+          </div>
+          <div class="metric-card">
+            <span class="label">可恢复节点</span>
+            <strong>{{ completedNodes.length }}</strong>
+            <small>{{ completedNodes.slice(0, 3).join(' / ') || '无' }}</small>
+          </div>
+        </section>
+
+        <section class="events-content">
+          <div class="timeline-panel">
+            <div class="panel-title">
+              <span>事件时间线</span>
+              <small>node_started → node_completed → checkpoint → failed</small>
+            </div>
+            <el-scrollbar height="520px">
+              <div class="event-timeline">
+                <button
+                  v-for="event in sessionEvents"
+                  :key="`${event.seq}-${event.event_type}`"
+                  class="event-row"
+                  :class="{ active: selectedEvent?.seq === event.seq, failed: isFailureEvent(event), checkpoint: event.event_type === 'session_checkpointed' }"
+                  @click="selectedEvent = event"
+                >
+                  <span class="event-dot"></span>
+                  <span class="event-main">
+                    <span class="event-title">
+                      #{{ event.seq }} {{ formatEventName(event.event_type) }}
+                    </span>
+                    <span class="event-meta">
+                      {{ event.node_name || event.payload?.node_name || event.source || 'runtime' }}
+                      <b v-if="event.payload?.duration_ms"> · {{ event.payload.duration_ms }}ms</b>
+                    </span>
+                  </span>
+                  <span class="event-time">{{ formatTime(event.timestamp) }}</span>
+                </button>
+              </div>
+            </el-scrollbar>
+          </div>
+
+          <aside class="event-detail">
+            <div class="panel-title">
+              <span>事件详情</span>
+              <small>{{ selectedEvent ? `seq ${selectedEvent.seq}` : '选择左侧事件' }}</small>
+            </div>
+
+            <template v-if="selectedEvent">
+              <div class="detail-card">
+                <label>事件类型</label>
+                <strong>{{ selectedEvent.event_type }}</strong>
+              </div>
+              <div class="detail-grid">
+                <div>
+                  <label>节点</label>
+                  <span>{{ selectedEvent.node_name || selectedEvent.payload?.node_name || '-' }}</span>
+                </div>
+                <div>
+                  <label>来源</label>
+                  <span>{{ selectedEvent.source || '-' }}</span>
+                </div>
+                <div>
+                  <label>时间</label>
+                  <span>{{ formatTime(selectedEvent.timestamp) }}</span>
+                </div>
+                <div>
+                  <label>序号</label>
+                  <span>#{{ selectedEvent.seq }}</span>
+                </div>
+              </div>
+              <div class="payload-box">
+                <div class="payload-title">Payload</div>
+                <pre>{{ JSON.stringify(selectedEvent.payload || {}, null, 2) }}</pre>
+              </div>
+            </template>
+            <el-empty v-else description="选择一条事件查看详情" />
+
+            <div class="checkpoint-card">
+              <div class="panel-title compact">
+                <span>恢复快照</span>
+                <small>latest checkpoint</small>
+              </div>
+              <p>
+                {{ recoveryPayload?.checkpoint?.checkpoint_id || '暂无 checkpoint' }}
+              </p>
+              <div class="node-pills">
+                <span v-for="node in completedNodes" :key="node">{{ node }}</span>
+              </div>
+            </div>
+          </aside>
+        </section>
+      </div>
+
+      <template #footer>
+        <el-button @click="eventsVisible=false">关闭</el-button>
+        <el-button type="primary" :disabled="!currentEventTask" @click="retryTask(currentEventTask)">从断点重试</el-button>
+      </template>
+    </el-dialog>
 
   </div>
 </template>
@@ -323,6 +460,26 @@ const resetFilters = () => { filters.value = { dateRange: [], market: '', status
 // 报告弹窗状态
 const reportVisible = ref(false)
 const reportSections = ref<Array<{ key?: string; title: string; content: any }>>([])
+const eventsVisible = ref(false)
+const eventsLoading = ref(false)
+const currentEventTask = ref<any | null>(null)
+const sessionEvents = ref<any[]>([])
+const selectedEvent = ref<any | null>(null)
+const recoveryPayload = ref<any | null>(null)
+
+const latestEvent = computed(() => sessionEvents.value[sessionEvents.value.length - 1] || null)
+const completedNodes = computed(() => {
+  const checkpointNodes = recoveryPayload.value?.checkpoint?.recoverable_state?.completed_nodes
+  if (Array.isArray(checkpointNodes)) return checkpointNodes
+  const nodes = new Set<string>()
+  sessionEvents.value.forEach((event:any) => {
+    if (event.event_type === 'node_completed') {
+      const node = event.node_name || event.payload?.node_name
+      if (node) nodes.add(node)
+    }
+  })
+  return Array.from(nodes)
+})
 
 const filteredList = computed(() => {
   let arr = list.value
@@ -369,7 +526,88 @@ const openReport = (row:any) => {
   router.push({ name: 'ReportDetail', params: { id } })
 }
 
-const retryTask = (row:any) => { ElMessage.info('重试功能待实现') }
+const retryTask = async (row:any) => {
+  try {
+    const taskId = row.task_id || row.analysis_id || row.id
+    if (!taskId) {
+      ElMessage.error('任务ID不存在')
+      return
+    }
+
+    await ElMessageBox.confirm(
+      `确定要从最近的断点重试任务 ${taskId} 吗？`,
+      '确认重试',
+      {
+        confirmButtonText: '断点续跑',
+        cancelButtonText: '取消',
+        type: 'warning'
+      }
+    )
+
+    const res = await analysisApi.retryTask(taskId, true)
+    const data = (res as any)?.data?.data || {}
+    ElMessage.success(data?.resume_from_checkpoint ? '任务已从断点继续执行' : '未找到断点，任务已重新执行')
+    await loadList()
+  } catch (error:any) {
+    if (error === 'cancel' || error === 'close') return
+    ElMessage.error(error?.response?.data?.detail || '重试任务失败')
+  }
+}
+
+const openEvents = async (row:any) => {
+  const taskId = row.task_id || row.analysis_id || row.id
+  if (!taskId) {
+    ElMessage.error('任务ID不存在')
+    return
+  }
+
+  currentEventTask.value = row
+  eventsVisible.value = true
+  eventsLoading.value = true
+  sessionEvents.value = []
+  selectedEvent.value = null
+  recoveryPayload.value = null
+
+  try {
+    const [detailRes, recoveryRes] = await Promise.all([
+      analysisApi.getSessionEvents(taskId),
+      analysisApi.getSessionRecovery(taskId).catch(() => null)
+    ])
+    const detail = (detailRes as any)?.data?.data || {}
+    const events = Array.isArray(detail.events) ? detail.events : []
+    sessionEvents.value = events
+    selectedEvent.value = events[events.length - 1] || null
+    recoveryPayload.value = (recoveryRes as any)?.data?.data || null
+  } catch (e:any) {
+    ElMessage.error(e?.response?.data?.detail || '获取执行轨迹失败')
+  } finally {
+    eventsLoading.value = false
+  }
+}
+
+const formatEventName = (eventType:string) => {
+  const map: Record<string, string> = {
+    session_started: '会话启动',
+    skill_selected: 'Skill 选中',
+    node_started: '节点开始',
+    node_completed: '节点完成',
+    stage_completed: '阶段完成',
+    judge_evaluated: 'LLM Judge',
+    session_checkpointed: 'Checkpoint',
+    quality_gate_evaluated: '质量门禁',
+    task_retry_requested: '请求重试',
+    session_resume_started: '断点恢复',
+    session_failed: '会话失败',
+    session_completed: '会话完成',
+    tool_call_blocked: '工具拦截'
+  }
+  return map[eventType] || eventType
+}
+
+const isFailureEvent = (event:any) => {
+  const type = String(event?.event_type || '')
+  return type.includes('failed') || type.includes('error') || event?.payload?.error
+}
 
 // 显示错误详情
 const showErrorDetail = async (row: any) => {
@@ -538,5 +776,346 @@ const formatTime = (t:string) => t ? formatDateTime(t) : '-'
   .list-header { display:flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap:8px; }
   .pagination-wrapper { display:flex; justify-content:center; margin-top: 16px; }
 }
-</style>
 
+:deep(.events-dialog) {
+  border-radius: 24px;
+  overflow: hidden;
+  background: #f6f3ec;
+
+  .el-dialog__header {
+    padding: 0;
+    margin: 0;
+  }
+
+  .el-dialog__body {
+    padding: 0;
+  }
+
+  .el-dialog__footer {
+    padding: 16px 24px 22px;
+    background: #f6f3ec;
+  }
+}
+
+.events-hero {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 28px 32px;
+  color: #fff;
+  background:
+    radial-gradient(circle at 16% 18%, rgba(255, 204, 112, .45), transparent 28%),
+    radial-gradient(circle at 86% 10%, rgba(255, 96, 86, .34), transparent 26%),
+    linear-gradient(135deg, #17211d 0%, #273b31 46%, #6b302b 100%);
+
+  h2 {
+    margin: 4px 0 8px;
+    font-size: 28px;
+    letter-spacing: .02em;
+  }
+
+  p {
+    margin: 0;
+    color: rgba(255, 255, 255, .74);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  }
+
+  .eyebrow {
+    color: #f7c86b;
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: .18em;
+    text-transform: uppercase;
+  }
+}
+
+.hero-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.events-shell {
+  padding: 22px 24px 0;
+}
+
+.trace-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.metric-card {
+  position: relative;
+  min-height: 94px;
+  padding: 16px;
+  border: 1px solid rgba(39, 59, 49, .1);
+  border-radius: 18px;
+  background:
+    linear-gradient(145deg, rgba(255,255,255,.88), rgba(255,255,255,.56)),
+    repeating-linear-gradient(135deg, rgba(39,59,49,.035) 0 1px, transparent 1px 8px);
+  box-shadow: 0 18px 42px rgba(39, 59, 49, .08);
+
+  .label {
+    display: block;
+    color: #777064;
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  strong {
+    display: block;
+    margin-top: 8px;
+    color: #17211d;
+    font-size: 22px;
+    line-height: 1.1;
+  }
+
+  small {
+    display: block;
+    margin-top: 7px;
+    color: #9a9488;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &.danger::after {
+    content: "";
+    position: absolute;
+    right: 16px;
+    top: 18px;
+    width: 10px;
+    height: 10px;
+    border-radius: 999px;
+    background: #d94b3d;
+    box-shadow: 0 0 0 8px rgba(217, 75, 61, .12);
+  }
+}
+
+.events-content {
+  display: grid;
+  grid-template-columns: 1.18fr .82fr;
+  gap: 18px;
+}
+
+.timeline-panel,
+.event-detail {
+  border: 1px solid rgba(39, 59, 49, .1);
+  border-radius: 22px;
+  background: rgba(255,255,255,.72);
+  box-shadow: 0 18px 50px rgba(39, 59, 49, .08);
+}
+
+.panel-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 20px 12px;
+  color: #17211d;
+  font-weight: 800;
+
+  small {
+    color: #9a9488;
+    font-weight: 600;
+  }
+
+  &.compact {
+    padding: 0 0 10px;
+  }
+}
+
+.event-timeline {
+  position: relative;
+  padding: 0 12px 16px 22px;
+
+  &::before {
+    content: "";
+    position: absolute;
+    left: 31px;
+    top: 6px;
+    bottom: 20px;
+    width: 2px;
+    background: linear-gradient(#d8d0c1, #eadfca);
+  }
+}
+
+.event-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 22px 1fr auto;
+  gap: 10px;
+  width: 100%;
+  margin: 6px 0;
+  padding: 12px 14px 12px 0;
+  border: 0;
+  border-radius: 14px;
+  color: #2a302c;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: background .18s ease, transform .18s ease;
+
+  &:hover,
+  &.active {
+    background: #fffaf0;
+    transform: translateX(2px);
+  }
+
+  &.failed .event-dot {
+    background: #d94b3d;
+    box-shadow: 0 0 0 6px rgba(217,75,61,.14);
+  }
+
+  &.checkpoint .event-dot {
+    background: #2f8f6b;
+    box-shadow: 0 0 0 6px rgba(47,143,107,.14);
+  }
+}
+
+.event-dot {
+  position: relative;
+  z-index: 1;
+  width: 11px;
+  height: 11px;
+  margin: 6px auto 0;
+  border-radius: 999px;
+  background: #c19a4a;
+  box-shadow: 0 0 0 6px rgba(193,154,74,.14);
+}
+
+.event-main {
+  min-width: 0;
+}
+
+.event-title {
+  display: block;
+  font-weight: 800;
+}
+
+.event-meta,
+.event-time {
+  color: #8b8478;
+  font-size: 12px;
+}
+
+.event-time {
+  align-self: center;
+  white-space: nowrap;
+}
+
+.event-detail {
+  padding: 0 18px 18px;
+}
+
+.detail-card,
+.detail-grid,
+.payload-box,
+.checkpoint-card {
+  border-radius: 16px;
+  background: #fffaf2;
+  border: 1px solid rgba(39, 59, 49, .08);
+}
+
+.detail-card {
+  padding: 14px;
+
+  label {
+    display: block;
+    color: #8b8478;
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  strong {
+    display: block;
+    margin-top: 6px;
+    color: #17211d;
+    font-size: 18px;
+  }
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 14px;
+
+  label {
+    display: block;
+    color: #958e82;
+    font-size: 11px;
+    font-weight: 800;
+  }
+
+  span {
+    display: block;
+    margin-top: 4px;
+    color: #2f352f;
+    font-size: 13px;
+    word-break: break-all;
+  }
+}
+
+.payload-box {
+  margin-top: 12px;
+  overflow: hidden;
+
+  .payload-title {
+    padding: 11px 14px;
+    color: #17211d;
+    font-size: 12px;
+    font-weight: 900;
+    background: #f1e5cf;
+  }
+
+  pre {
+    max-height: 190px;
+    margin: 0;
+    padding: 14px;
+    overflow: auto;
+    color: #2f352f;
+    font-size: 12px;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+}
+
+.checkpoint-card {
+  margin-top: 14px;
+  padding: 14px;
+
+  p {
+    margin: 0 0 12px;
+    color: #746c5f;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 12px;
+    word-break: break-all;
+  }
+}
+
+.node-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+
+  span {
+    padding: 5px 9px;
+    border-radius: 999px;
+    color: #235742;
+    background: #e2f1e8;
+    font-size: 12px;
+    font-weight: 700;
+  }
+}
+
+@media (max-width: 980px) {
+  .trace-summary,
+  .events-content {
+    grid-template-columns: 1fr;
+  }
+}
+</style>

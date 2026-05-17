@@ -36,10 +36,12 @@ from app.services.progress_log_handler import (register_analysis_tracker,
                                                unregister_analysis_tracker)
 from app.services.redis_progress_tracker import (RedisProgressTracker,
                                                  get_progress_by_id)
+from app.services.email_report_service import send_report_email_with_retry
 from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.graph.trading_graph import TradingAgentsGraph
 from tradingagents.skills import SkillMatchContext, SkillSelector, run_quality_gates
 from app.services.sessions import session_event_store, session_runtime_service
+from app.services.sessions.checkpoint_store import session_checkpoint_store
 
 # 股票基础信息获取（用于补充显示名称）
 try:
@@ -963,7 +965,8 @@ class SimpleAnalysisService:
         self,
         task_id: str,
         user_id: str,
-        request: SingleAnalysisRequest
+        request: SingleAnalysisRequest,
+        resume_from_checkpoint: bool = False,
     ):
         """在后台执行分析任务"""
         # 🔧 使用 get_symbol() 方法获取股票代码（兼容 symbol 和 stock_code 字段）
@@ -1114,7 +1117,13 @@ class SimpleAnalysisService:
             await self._update_task_status(task_id, AnalysisStatus.PROCESSING, 20)
 
             # 执行实际的分析
-            result = await self._execute_analysis_sync(task_id, user_id, request, progress_tracker)
+            result = await self._execute_analysis_sync(
+                task_id,
+                user_id,
+                request,
+                progress_tracker,
+                resume_from_checkpoint=resume_from_checkpoint,
+            )
 
             # 标记进度跟踪器完成（在线程中执行）
             await asyncio.to_thread(progress_tracker.mark_completed)
@@ -1216,12 +1225,143 @@ class SimpleAnalysisService:
             # 从日志监控中注销
             unregister_analysis_tracker(task_id)
 
+    async def retry_failed_task(
+        self,
+        task_id: str,
+        user_id: str,
+        *,
+        resume_from_checkpoint: bool = True,
+    ) -> Dict[str, Any]:
+        """Retry a failed task, optionally resuming from latest durable checkpoint."""
+        db = get_mongo_db()
+        uid_candidates: List[Any] = [str(user_id), user_id]
+        try:
+            uid_candidates.append(ObjectId(str(user_id)))
+        except Exception:
+            pass
+        if str(user_id) == "admin":
+            try:
+                uid_candidates.append(ObjectId("507f1f77bcf86cd799439011"))
+            except Exception:
+                pass
+
+        task_doc = await db.analysis_tasks.find_one(
+            {
+                "task_id": task_id,
+                "$or": [
+                    {"user_id": {"$in": uid_candidates}},
+                    {"user": {"$in": uid_candidates}},
+                ],
+            }
+        )
+        if not task_doc:
+            raise ValueError("任务不存在或无权访问")
+
+        status = str(task_doc.get("status", ""))
+        if status not in {"failed", "cancelled"}:
+            raise ValueError(f"只有 failed/cancelled 任务可以重试，当前状态: {status}")
+
+        stock_code = (
+            task_doc.get("symbol")
+            or task_doc.get("stock_code")
+            or task_doc.get("stock_symbol")
+        )
+        if not stock_code:
+            raise ValueError("任务缺少股票代码，无法重试")
+
+        raw_parameters = task_doc.get("parameters") or {}
+        if isinstance(raw_parameters, AnalysisParameters):
+            parameters = raw_parameters
+        else:
+            parameters = AnalysisParameters(**raw_parameters)
+        request = SingleAnalysisRequest(
+            symbol=stock_code,
+            stock_code=stock_code,
+            parameters=parameters,
+        )
+
+        checkpoint = None
+        if resume_from_checkpoint:
+            checkpoint = await session_checkpoint_store.get_latest_checkpoint(task_id)
+
+        retry_count = int(task_doc.get("retry_count", 0) or 0) + 1
+        now = datetime.utcnow()
+        await db.analysis_tasks.update_one(
+            {"task_id": task_id},
+            {
+                "$set": {
+                    "status": "processing",
+                    "progress": max(int(task_doc.get("progress", 0) or 0), 10),
+                    "message": "正在断点续跑..." if checkpoint else "正在重新执行...",
+                    "current_step": "resuming" if checkpoint else "retrying",
+                    "last_error": None,
+                    "started_at": now,
+                    "completed_at": None,
+                    "updated_at": now,
+                    "retry_mode": "checkpoint" if checkpoint else "full",
+                    "latest_checkpoint_id": (checkpoint or {}).get("checkpoint_id"),
+                },
+                "$inc": {"retry_count": 1},
+            },
+        )
+
+        existing_task = await self.memory_manager.get_task(task_id)
+        if not existing_task:
+            await self.memory_manager.create_task(
+                task_id=task_id,
+                user_id=str(user_id),
+                stock_code=stock_code,
+                parameters=parameters.model_dump(),
+                stock_name=task_doc.get("stock_name") or self._resolve_stock_name(stock_code),
+            )
+        else:
+            existing_task.error_message = None
+            existing_task.end_time = None
+        await self.memory_manager.update_task_status(
+            task_id=task_id,
+            status=TaskStatus.RUNNING,
+            progress=max(int(task_doc.get("progress", 0) or 0), 10),
+            message="正在断点续跑..." if checkpoint else "正在重新执行...",
+            current_step="resuming" if checkpoint else "retrying",
+            error_message=None,
+        )
+
+        session_event_store.append_event_sync(
+            task_id,
+            "task_retry_requested",
+            {
+                "retry_count": retry_count,
+                "resume_from_checkpoint": bool(checkpoint),
+                "checkpoint_id": (checkpoint or {}).get("checkpoint_id"),
+            },
+            source="service",
+        )
+
+        asyncio.create_task(
+            self.execute_analysis_background(
+                task_id,
+                str(user_id),
+                request,
+                resume_from_checkpoint=bool(checkpoint),
+            )
+        )
+
+        return {
+            "task_id": task_id,
+            "status": "processing",
+            "retry_count": retry_count,
+            "resume_from_checkpoint": bool(checkpoint),
+            "checkpoint_id": (checkpoint or {}).get("checkpoint_id"),
+            "message": "任务已按checkpoint断点续跑" if checkpoint else "任务已重新执行",
+        }
+
     async def _execute_analysis_sync(
         self,
         task_id: str,
         user_id: str,
         request: SingleAnalysisRequest,
-        progress_tracker: Optional[RedisProgressTracker] = None
+        progress_tracker: Optional[RedisProgressTracker] = None,
+        resume_from_checkpoint: bool = False,
     ) -> Dict[str, Any]:
         """同步执行分析（在共享线程池中运行）"""
         # 🔧 使用共享线程池，支持多个任务并发执行
@@ -1234,7 +1374,8 @@ class SimpleAnalysisService:
             task_id,
             user_id,
             request,
-            progress_tracker
+            progress_tracker,
+            resume_from_checkpoint,
         )
         logger.info(f"✅ [线程池] 分析任务执行完成: {task_id}")
         return result
@@ -1244,7 +1385,8 @@ class SimpleAnalysisService:
         task_id: str,
         user_id: str,
         request: SingleAnalysisRequest,
-        progress_tracker: Optional[RedisProgressTracker] = None
+        progress_tracker: Optional[RedisProgressTracker] = None,
+        resume_from_checkpoint: bool = False,
     ) -> Dict[str, Any]:
         """同步执行分析的具体实现"""
         try:
@@ -1442,18 +1584,32 @@ class SimpleAnalysisService:
                 logger.warning(f"⚠️ [Skill] 选择 skill 失败，将继续使用默认分析配置: {skill_err}")
 
             try:
-                session_runtime_service.start_session_sync(
-                    task_id,
-                    task_id=task_id,
-                    user_id=str(user_id),
-                    skill_name=selected_skill.name if selected_skill else "",
-                    skill_version=selected_skill.version if selected_skill else None,
-                    analysis_context={
-                        "symbol": request.get_symbol(),
-                        "market_type": market_type,
-                        "research_depth": research_depth,
-                    },
-                )
+                if resume_from_checkpoint:
+                    session_event_store.append_event_sync(
+                        task_id,
+                        "session_resume_started",
+                        {
+                            "task_id": task_id,
+                            "user_id": str(user_id),
+                            "symbol": request.get_symbol(),
+                            "market_type": market_type,
+                            "research_depth": research_depth,
+                        },
+                        source="service",
+                    )
+                else:
+                    session_runtime_service.start_session_sync(
+                        task_id,
+                        task_id=task_id,
+                        user_id=str(user_id),
+                        skill_name=selected_skill.name if selected_skill else "",
+                        skill_version=selected_skill.version if selected_skill else None,
+                        analysis_context={
+                            "symbol": request.get_symbol(),
+                            "market_type": market_type,
+                            "research_depth": research_depth,
+                        },
+                    )
             except Exception as session_err:
                 logger.warning(f"⚠️ [Session] 初始化 durable session 失败，将继续执行: {session_err}")
 
@@ -1490,6 +1646,25 @@ class SimpleAnalysisService:
             # 🔍 验证TradingGraph实例中的配置
             logger.info(f"🔍 [引擎验证] TradingGraph配置中的快速模型: {trading_graph.config.get('quick_think_llm')}")
             logger.info(f"🔍 [引擎验证] TradingGraph配置中的深度模型: {trading_graph.config.get('deep_think_llm')}")
+
+            resume_state = None
+            if resume_from_checkpoint:
+                try:
+                    checkpoint = session_checkpoint_store.get_latest_checkpoint_sync(task_id)
+                    recoverable_state = (checkpoint or {}).get("recoverable_state") or {}
+                    completed_nodes = recoverable_state.get("completed_nodes", [])
+                    if recoverable_state and completed_nodes:
+                        resume_state = recoverable_state
+                        logger.info(
+                            "♻️ [断点续跑] 载入checkpoint: task=%s, checkpoint=%s, completed_nodes=%s",
+                            task_id,
+                            (checkpoint or {}).get("checkpoint_id"),
+                            completed_nodes,
+                        )
+                    else:
+                        logger.warning(f"⚠️ [断点续跑] 未找到可用checkpoint，将从头执行: {task_id}")
+                except Exception as checkpoint_err:
+                    logger.warning(f"⚠️ [断点续跑] 读取checkpoint失败，将从头执行: {checkpoint_err}")
 
             # 准备分析数据
             start_time = datetime.now()
@@ -1737,6 +1912,7 @@ class SimpleAnalysisService:
                 task_id=task_id,
                 planner_plan=config.get("planner_plan"),
                 focus_hint=config.get("focus_hint"),
+                resume_state=resume_state,
             )
 
             logger.info(f"✅ trading_graph.propagate 执行完成")
@@ -2944,6 +3120,8 @@ class SimpleAnalysisService:
                     }}}
                 )
                 logger.info(f"💾 分析结果已保存 (web风格): {task_id}")
+
+                await self._send_scheduled_report_email_if_needed(task_id, result, document)
             else:
                 logger.error("❌ MongoDB插入失败")
 
@@ -2955,7 +3133,8 @@ class SimpleAnalysisService:
                     'task_id': task_id,
                     'success': result.get('success', True),
                     'error': str(e),
-                    'completed_at': datetime.utcnow().isoformat()
+                    'completed_at': datetime.utcnow().isoformat(),
+                    'source': result.get('source')
                 }
                 await db.analysis_tasks.update_one(
                     {"task_id": task_id},
@@ -2964,6 +3143,39 @@ class SimpleAnalysisService:
                 logger.info(f"💾 使用简化结果保存: {task_id}")
             except Exception as fallback_error:
                 logger.error(f"❌ 简化保存也失败: {task_id} - {fallback_error}")
+
+    async def _send_scheduled_report_email_if_needed(self, task_id: str, result: Dict[str, Any], report_doc: Dict[str, Any]):
+        """仅对定时分析任务发送邮件报告。"""
+        try:
+            source = str(result.get("source") or result.get("task_source") or "").lower()
+            if source != "scheduled":
+                return
+
+            db = get_mongo_db()
+            task_doc = await db.analysis_tasks.find_one({"task_id": task_id})
+            if not task_doc:
+                return
+
+            user_id = task_doc.get("user_id")
+            if not user_id:
+                return
+
+            user_doc = await db.users.find_one({"_id": ObjectId(user_id)})
+            if not user_doc:
+                return
+
+            preferences = user_doc.get("preferences", {}) or {}
+            if not preferences.get("scheduled_report_email_enabled", True):
+                return
+            if not user_doc.get("email"):
+                return
+
+            class _User:
+                email = user_doc.get("email")
+
+            await send_report_email_with_retry(_User, report_doc)
+        except Exception as exc:
+            logger.warning(f"⚠️ 定时报告邮件发送失败: {task_id} - {exc}")
 
     async def _save_analysis_results_complete(self, task_id: str, result: Dict[str, Any]):
         """完整的分析结果保存 - 完全采用web目录的双重保存方式"""

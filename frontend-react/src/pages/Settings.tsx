@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import apiClient from '@/lib/api'
+import { authApi } from '@/services/auth'
 import {
   Bell,
   CalendarClock,
@@ -29,6 +30,7 @@ interface AppSettings {
   refreshInterval: number
   notifyAnalysisComplete: boolean
   notifyDesktop: boolean
+  scheduledReportEmailEnabled: boolean
 }
 
 interface LLMProvider {
@@ -84,6 +86,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   refreshInterval: 30,
   notifyAnalysisComplete: true,
   notifyDesktop: true,
+  scheduledReportEmailEnabled: true,
 }
 
 const TABS: { key: TabKey; label: string; icon: React.ElementType }[] = [
@@ -234,8 +237,20 @@ export default function Settings() {
   const handleSaveLocalSettings = () => {
     setSaving(true)
     localStorage.setItem('app_settings', JSON.stringify(settings))
-    setSaving(false)
-    toast.success('本地设置已保存')
+    authApi.updateMe({
+      email: settings.email,
+      language: settings.language,
+      preferences: {
+        scheduled_report_email_enabled: settings.scheduledReportEmailEnabled,
+        email_notifications: settings.scheduledReportEmailEnabled,
+      },
+    }).then(() => {
+      toast.success('设置已保存')
+    }).catch((error: any) => {
+      toast.error(error.response?.data?.detail || '保存设置失败')
+    }).finally(() => {
+      setSaving(false)
+    })
   }
 
   const handleSaveModelDefaults = async () => {
@@ -676,6 +691,12 @@ export default function Settings() {
           <SettingRow title="分析完成通知">
             <Toggle checked={settings.notifyAnalysisComplete} onChange={v => update('notifyAnalysisComplete', v)} />
           </SettingRow>
+          <SettingRow title="定时报告邮件推送" description="定时分析完成后发送报告到邮箱">
+            <Toggle checked={settings.scheduledReportEmailEnabled} onChange={v => update('scheduledReportEmailEnabled', v)} />
+          </SettingRow>
+          <div className="text-xs text-white/35 mt-2">
+            需要配置 SMTP 环境变量：`MAIL_HOST`、`MAIL_PORT`、`MAIL_USER`、`MAIL_PASS`、`MAIL_FROM`
+          </div>
         </Panel>
       )
     }

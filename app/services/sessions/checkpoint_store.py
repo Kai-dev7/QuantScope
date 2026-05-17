@@ -49,5 +49,13 @@ class SessionCheckpointStore:
                 sort=[("created_at", -1)],
             )
 
+    def get_latest_checkpoint_sync(self, session_id: str) -> Optional[Dict[str, Any]]:
+        db = get_mongo_db_sync()
+        return db[self._collection_name].find_one(
+            {"session_id": session_id},
+            {"_id": 0},
+            sort=[("created_at", -1)],
+        )
+
 
 session_checkpoint_store = SessionCheckpointStore()

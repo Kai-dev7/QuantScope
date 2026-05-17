@@ -17,10 +17,12 @@ logger = logging.getLogger("webapi.websocket")
 # 🔥 全局 WebSocket 连接管理器
 class ConnectionManager:
     """WebSocket 连接管理器"""
-    
+
     def __init__(self):
         # user_id -> Set[WebSocket]
         self.active_connections: Dict[str, Set[WebSocket]] = {}
+        # task_id -> Set[WebSocket]  (任务进度专用)
+        self.task_connections: Dict[str, Set[WebSocket]] = {}
         self._lock = asyncio.Lock()
     
     async def connect(self, websocket: WebSocket, user_id: str):
@@ -84,15 +86,57 @@ class ConnectionManager:
             all_connections = []
             for connections in self.active_connections.values():
                 all_connections.extend(connections)
-        
+
         message_json = json.dumps(message, ensure_ascii=False)
-        
+
         for connection in all_connections:
             try:
                 await connection.send_text(message_json)
             except Exception as e:
                 logger.warning(f"❌ [WS] 广播消息失败: {e}")
-    
+
+    # ===== 任务进度专用 WebSocket 方法 =====
+
+    async def register_task_connection(self, websocket: WebSocket, task_id: str):
+        """注册任务 WebSocket 连接"""
+        await websocket.accept()
+        async with self._lock:
+            if task_id not in self.task_connections:
+                self.task_connections[task_id] = set()
+            self.task_connections[task_id].add(websocket)
+        logger.info(f"✅ [WS-Task] 注册连接: task={task_id}, 连接数={len(self.task_connections.get(task_id, set()))}")
+
+    async def unregister_task_connection(self, websocket: WebSocket, task_id: str):
+        """注销任务 WebSocket 连接"""
+        async with self._lock:
+            if task_id in self.task_connections:
+                self.task_connections[task_id].discard(websocket)
+                if not self.task_connections[task_id]:
+                    del self.task_connections[task_id]
+        logger.info(f"🔌 [WS-Task] 注销连接: task={task_id}")
+
+    async def send_to_task(self, task_id: str, message: dict):
+        """向指定任务的所有 WebSocket 连接发送消息"""
+        async with self._lock:
+            connections = list(self.task_connections.get(task_id, set()))
+
+        if not connections:
+            return
+
+        message_json = json.dumps(message, ensure_ascii=False)
+        dead = []
+        for conn in connections:
+            try:
+                await conn.send_text(message_json)
+            except Exception as e:
+                logger.debug(f"❌ [WS-Task] 发送失败: {e}")
+                dead.append(conn)
+
+        if dead:
+            async with self._lock:
+                for conn in dead:
+                    self.task_connections.get(task_id, set()).discard(conn)
+
     def get_stats(self) -> dict:
         """获取连接统计"""
         return {
@@ -230,10 +274,9 @@ async def websocket_task_progress_endpoint(
     user_id = "admin"
     channel = f"task_progress:{task_id}"
     
-    # 连接 WebSocket
-    await websocket.accept()
-    logger.info(f"✅ [WS-Task] 新连接: task={task_id}, user={user_id}")
-    
+# 注册到任务连接管理器
+    await manager.register_task_connection(websocket, task_id)
+
     # 发送连接确认
     await websocket.send_json({
         "type": "connected",
@@ -243,10 +286,9 @@ async def websocket_task_progress_endpoint(
             "message": "已连接任务进度流"
         }
     })
-    
+
     try:
-        # 这里可以从 Redis 或数据库获取任务进度
-        # 暂时保持连接，等待任务完成
+        # 保持连接，接收客户端消息（ping/pong）
         while True:
             try:
                 data = await websocket.receive_text()
@@ -257,9 +299,10 @@ async def websocket_task_progress_endpoint(
             except Exception as e:
                 logger.error(f"❌ [WS-Task] 接收消息错误: {e}")
                 break
-    
+
     finally:
-        logger.info(f"🔌 [WS-Task] 断开连接: task={task_id}")
+        # 注销任务连接
+        await manager.unregister_task_connection(websocket, task_id)
 
 
 @router.get("/ws/stats")
@@ -286,19 +329,14 @@ async def send_notification_via_websocket(user_id: str, notification: dict):
 
 async def send_task_progress_via_websocket(task_id: str, progress_data: dict):
     """
-    通过 WebSocket 发送任务进度
-    
-    Args:
-        task_id: 任务 ID
-        progress_data: 进度数据
+    通过 WebSocket 发送任务进度（推送至 task_id 对应的所有连接）
     """
-    # 注意：这里需要知道任务属于哪个用户
-    # 可以从数据库查询或在 progress_data 中传递
-    # 暂时简化处理
     message = {
-        "type": "progress",
-        "data": progress_data
+        "type": "step_update",  # 步骤完成/更新事件
+        "data": {
+            "task_id": task_id,
+            **progress_data  # 含 step_name, step_index, status, duration 等
+        }
     }
-    # 广播给所有连接（生产环境应该只发给任务所属用户）
-    await manager.broadcast(message)
+    await manager.send_to_task(task_id, message)
 

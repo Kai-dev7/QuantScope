@@ -94,6 +94,7 @@ class UserService:
                     # 通知设置
                     "notifications_enabled": True,
                     "email_notifications": False,
+                    "scheduled_report_email_enabled": True,
                     "desktop_notifications": True,
                     "analysis_complete_notification": True,
                     "system_maintenance_notification": True
@@ -122,7 +123,12 @@ class UserService:
             logger.info(f"🔍 [authenticate_user] 开始认证用户: {username}")
 
             # 查找用户
-            user_doc = self.users_collection.find_one({"username": username})
+            user_doc = self.users_collection.find_one({
+                "$or": [
+                    {"username": username},
+                    {"email": username.strip().lower()},
+                ]
+            })
             logger.info(f"🔍 [authenticate_user] 数据库查询结果: {'找到用户' if user_doc else '用户不存在'}")
 
             if not user_doc:
@@ -165,6 +171,17 @@ class UserService:
         """根据用户名获取用户"""
         try:
             user_doc = self.users_collection.find_one({"username": username})
+            if user_doc:
+                return User(**user_doc)
+            return None
+        except Exception as e:
+            logger.error(f"❌ 获取用户失败: {e}")
+            return None
+
+    async def get_user_by_email(self, email: str) -> Optional[User]:
+        """根据邮箱获取用户"""
+        try:
+            user_doc = self.users_collection.find_one({"email": email.strip().lower()})
             if user_doc:
                 return User(**user_doc)
             return None

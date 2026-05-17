@@ -156,7 +156,8 @@ class SingleAnalysisRequest(BaseModel):
     """单股分析请求"""
     symbol: Optional[str] = Field(None, description="6位股票代码")
     stock_code: Optional[str] = Field(None, description="股票代码(已废弃,使用symbol)")
-    parameters: Optional[AnalysisParameters] = None
+    parameters: Optional[AnalysisParameters] = Field(default_factory=AnalysisParameters)
+    source: Optional[str] = Field(None, description="任务来源，如 scheduled/manual/api")
 
     def get_symbol(self) -> str:
         """获取股票代码(兼容旧字段)"""

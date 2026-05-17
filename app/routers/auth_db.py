@@ -122,7 +122,7 @@ async def login(payload: LoginRequest, request: Request):
     ip_address = request.client.host if request.client else "unknown"
     user_agent = request.headers.get("user-agent", "")
 
-    logger.info(f"🔐 登录请求 - 用户名: {payload.username}, IP: {ip_address}")
+    logger.info(f"🔐 登录请求 - 账号: {payload.username}, IP: {ip_address}")
 
     try:
         # 验证输入
@@ -133,16 +133,16 @@ async def login(payload: LoginRequest, request: Request):
                 username=payload.username or "unknown",
                 action_type=ActionType.USER_LOGIN,
                 action="用户登录",
-                details={"reason": "用户名和密码不能为空"},
+                details={"reason": "账号和密码不能为空"},
                 success=False,
-                error_message="用户名和密码不能为空",
+                error_message="账号和密码不能为空",
                 duration_ms=int((time.time() - start_time) * 1000),
                 ip_address=ip_address,
                 user_agent=user_agent
             )
-            raise HTTPException(status_code=400, detail="用户名和密码不能为空")
+            raise HTTPException(status_code=400, detail="账号和密码不能为空")
 
-        logger.info(f"🔍 开始认证用户: {payload.username}")
+        logger.info(f"🔍 开始认证账号: {payload.username}")
 
         # 使用数据库认证
         user = await user_service.authenticate_user(payload.username, payload.password)
@@ -150,20 +150,20 @@ async def login(payload: LoginRequest, request: Request):
         logger.info(f"🔍 认证结果: user={'存在' if user else '不存在'}")
 
         if not user:
-            logger.warning(f"❌ 登录失败 - 用户名或密码错误: {payload.username}")
+            logger.warning(f"❌ 登录失败 - 账号或密码错误: {payload.username}")
             await log_operation(
                 user_id="unknown",
                 username=payload.username,
                 action_type=ActionType.USER_LOGIN,
                 action="用户登录",
-                details={"reason": "用户名或密码错误"},
+                details={"reason": "账号或密码错误"},
                 success=False,
-                error_message="用户名或密码错误",
+                error_message="账号或密码错误",
                 duration_ms=int((time.time() - start_time) * 1000),
                 ip_address=ip_address,
                 user_agent=user_agent
             )
-            raise HTTPException(status_code=401, detail="用户名或密码错误")
+            raise HTTPException(status_code=401, detail="账号或密码错误")
 
         # 生成 token
         token = AuthService.create_access_token(sub=user.username)
