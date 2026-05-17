@@ -1,20 +1,45 @@
 # QuantScope Cloud Deployment - docker-compose for Tencent Cloud
 # 用法: docker-compose -f docker-compose.cloud.yml up -d
-# 
+#
 # 架构说明:
-#   - MongoDB: 使用外部 MongoDB Atlas（免费 M0）
-#   - Redis: 使用主机本地 redis-server（腾讯云内网访问）
-#   - 后端: 本容器直接运行，不通过 Docker 内部网络
+#   - MongoDB: Docker 容器 (mongo:7)，端口映射到宿主机
+#   - Redis: 宿主机本地 redis-server（已安装）
+#   - 后端: 本容器运行，使用 host 网络模式访问 MongoDB/Redis
 #
 # 依赖外部服务（需提前配置）:
-#   1. MongoDB Atlas M0 集群
-#   2. 主机 redis-server (apt-get install redis-server)
-#   3. 环境变量文件 .env.cloud
+#   1. 宿主机 redis-server (apt-get install redis-server && redis-server --daemonize yes)
+#   2. 环境变量文件 .env.cloud
 
 version: '3.8'
 
 services:
-  # ── 后端服务 ────────────────────────────────────────────────
+  # ── MongoDB ──────────────────────────────────────────────────────────
+  mongodb:
+    image: mongo:7
+    container_name: quantscope-mongodb
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    command: mongod --auth --bind_ip localhost
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: tradingagents123
+      MONGO_INITDB_DATABASE: tradingagents
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: json-file
+      options:
+        max-size: 100m
+        max-file: 3
+
+  # ── 后端服务 ─────────────────────────────────────────────────────────
   backend:
     build:
       context: .
@@ -23,31 +48,30 @@ services:
     container_name: quantscope-backend
     restart: unless-stopped
     ports:
-      - "127.0.0.1:8000:8000"   # 仅本地监听，通过 Nginx 反向代理
+      - "127.0.0.1:8000:8000"
     volumes:
       - ./logs:/app/logs
       - ./data:/app/data
       - ./config:/app/config
     env_file:
-      - .env.cloud               # 生产环境配置（包含 Atlas 连接字符串）
+      - .env.cloud
     environment:
       PYTHONUNBUFFERED: "1"
       TZ: "Asia/Shanghai"
       # 日志
       TRADINGAGENTS_LOG_LEVEL: INFO
       TRADINGAGENTS_LOG_DIR: /app/logs
-      # Redis 连接到主机网络（host.docker.internal = 宿主机的巧妙方案，
-      # 但腾讯云轻量无特殊网络时用 host 网络模式更稳定）
-      TRADINGAGENTS_REDIS_URL: redis://:tradingagents123@host.containers.internal:6379
+      # Redis 连接到宿主机
+      TRADINGAGENTS_REDIS_URL: redis://:tradingagents123@host.docker.internal:6379
       TRADINGAGENTS_CACHE_TYPE: redis
-      # 云端不需要 Docker 内部 DNS
-      DOCKER_CONTAINER: "false"
-      # 后端监听地址（仅本地）
+      # 云端标识
+      DOCKER_CONTAINER: "true"
+      # 后端监听地址
       API_HOST: "0.0.0.0"
       API_PORT: "8000"
-    network_mode: host           # 直接使用宿主机网络，简化 Redis 访问
+    network_mode: host
     depends_on:
-      redis:
+      mongodb:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
@@ -61,7 +85,7 @@ services:
         max-size: 100m
         max-file: 3
 
-  # ── 前端静态服务 ────────────────────────────────────────────
+  # ── 前端静态服务 ─────────────────────────────────────────────────────
   # 如果不想单独装 Nginx，可以用这个容器提供前端静态文件
   frontend:
     build:
@@ -79,33 +103,9 @@ services:
     profiles:
       - frontend-only
 
-  # ── Redis（备用：腾讯云轻量 1GB 内存时建议用宿主机 redis-server）─
-  redis:
-    image: redis:7-alpine
-    container_name: quantscope-redis
-    restart: unless-stopped
-    ports:
-      - "127.0.0.1:6379:6379"
-    command: redis-server --appendonly yes --requirepass tradingagents123
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-    logging:
-      driver: json-file
-      options:
-        max-size: 50m
-        max-file: 2
-    profiles:
-      - with-redis   # 用 --profile with-redis 启用
-
 # 数据卷
 volumes:
-  redis_data:
+  mongodb_data:
     driver: local
 
 # 网络：使用 host 模式，不需要额外网络配置
