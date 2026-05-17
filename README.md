@@ -45,10 +45,10 @@ QuantScope 重点解决三类问题：
 
 | 页面 | 说明 |
 |------|------|
-| ![登录页](./screenshots/01-login.png) | **用户登录** — 支持用户名密码认证，进入工作台 |
+| ![控制台](./screenshots/01-dashboard.png) | **工作台** — 概览数据、市场状态与快捷入口 |
 | ![股票分析](./screenshots/02-stock-analysis.png) | **单股分析** — 输入股票代码，提交深度分析任务 |
-| ![分析流程](./screenshots/03-analysis-pipeline.png) | **多阶段流水线** — 实时展示分析师节点执行状态 |
-| ![分析结果](./screenshots/04-analysis-result.png) | **完整报告** — 查看最终研究报告与数据洞察 |
+| ![完整报告](./screenshots/03-full-report.png) | **完整报告** — 查看最终研究报告与数据洞察 |
+| ![定时分析](./screenshots/04-scheduled-analysis.png) | **定时分析** — 配置定时任务，自动化研究流程 |
 
 ## 技术架构
 
