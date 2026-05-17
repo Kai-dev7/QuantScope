@@ -171,6 +171,17 @@ class UserService:
         except Exception as e:
             logger.error(f"❌ 获取用户失败: {e}")
             return None
+
+    async def get_user_by_email(self, email: str) -> Optional[User]:
+        """根据邮箱获取用户"""
+        try:
+            user_doc = self.users_collection.find_one({"email": email.lower()})
+            if user_doc:
+                return User(**user_doc)
+            return None
+        except Exception as e:
+            logger.error(f"❌ 获取用户失败: {e}")
+            return None
     
     async def get_user_by_id(self, user_id: str) -> Optional[User]:
         """根据用户ID获取用户"""

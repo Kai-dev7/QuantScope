@@ -4,6 +4,8 @@
 """
 
 import time
+import re
+from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Header, Request
@@ -14,6 +16,8 @@ from app.services.user_service import user_service
 from app.models.user import UserCreate, UserUpdate
 from app.services.operation_log_service import log_operation
 from app.models.operation_log import ActionType
+from app.utils.timezone import now_tz
+from app.core.redis_client import get_redis_service
 
 # 尝试导入日志管理器
 try:
@@ -488,7 +492,7 @@ async def list_users(
             raise HTTPException(status_code=403, detail="权限不足")
 
         users = await user_service.list_users(skip=skip, limit=limit)
-        
+
         return {
             "success": True,
             "data": {
@@ -502,3 +506,238 @@ async def list_users(
     except Exception as e:
         logger.error(f"获取用户列表失败: {e}")
         raise HTTPException(status_code=500, detail=f"获取用户列表失败: {str(e)}")
+
+
+# ==================== 邮箱验证码登录相关接口 ====================
+
+class SendCodeRequest(BaseModel):
+    """发送验证码请求"""
+    email: str
+    purpose: str = "login"  # "login" or "register"
+
+
+class VerifyCodeRequest(BaseModel):
+    """验证验证码请求"""
+    email: str
+    code: str
+
+
+class RegisterEmailRequest(BaseModel):
+    """邮箱注册请求"""
+    email: str
+    username: str
+    password: str
+    code: str  # 注册时也需要验证码验证
+
+
+@router.post("/send-code")
+async def send_verification_code(payload: SendCodeRequest, request: Request):
+    """发送验证码"""
+    start_time = time.time()
+    ip_address = request.client.host if request.client else "unknown"
+
+    try:
+        # 验证邮箱格式
+        import re
+        if not re.match(r'^[^@]+@[^@]+\.[^@]+$', payload.email):
+            raise HTTPException(status_code=400, detail="邮箱格式不正确")
+
+        # 发送验证码
+        dev_code, is_dev_mode = await AuthService.request_verification_code(
+            payload.email,
+            purpose=payload.purpose
+        )
+
+        await log_operation(
+            user_id="unknown",
+            username=payload.email,
+            action_type=ActionType.USER_LOGIN,
+            action="发送验证码",
+            details={"purpose": payload.purpose, "ip": ip_address},
+            success=True,
+            duration_ms=int((time.time() - start_time) * 1000),
+            ip_address=ip_address,
+            user_agent=request.headers.get("user-agent", "")
+        )
+
+        # 返回响应
+        if is_dev_mode:
+            # 开发环境：返回验证码
+            return {
+                "success": True,
+                "data": {
+                    "dev_code": dev_code,
+                    "message": "验证码已生成（开发模式）"
+                },
+                "message": "发送成功"
+            }
+        else:
+            # 生产环境：提示已发送
+            return {
+                "success": True,
+                "data": {
+                    "message": "验证码已发送到邮箱"
+                },
+                "message": "发送成功"
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"发送验证码失败: {e}")
+        raise HTTPException(status_code=500, detail=f"发送验证码失败: {str(e)}")
+
+
+@router.post("/verify-code")
+async def verify_code(payload: VerifyCodeRequest, request: Request):
+    """验证验证码并登录"""
+    start_time = time.time()
+    ip_address = request.client.host if request.client else "unknown"
+
+    try:
+        # 验证邮箱格式
+        import re
+        if not re.match(r'^[^@]+@[^@]+\.[^@]+$', payload.email):
+            raise HTTPException(status_code=400, detail="邮箱格式不正确")
+
+        # 验证验证码并登录
+        result = await AuthService.verify_and_login(payload.email, payload.code)
+
+        if not result:
+            await log_operation(
+                user_id="unknown",
+                username=payload.email,
+                action_type=ActionType.USER_LOGIN,
+                action="验证码登录",
+                details={"reason": "验证码错误或已过期", "ip": ip_address},
+                success=False,
+                error_message="验证码错误或已过期",
+                duration_ms=int((time.time() - start_time) * 1000),
+                ip_address=ip_address,
+                user_agent=request.headers.get("user-agent", "")
+            )
+            raise HTTPException(status_code=401, detail="验证码错误或已过期")
+
+        await log_operation(
+            user_id=result["user"]["id"],
+            username=result["user"]["username"],
+            action_type=ActionType.USER_LOGIN,
+            action="验证码登录",
+            details={"login_method": "email_code", "ip": ip_address},
+            success=True,
+            duration_ms=int((time.time() - start_time) * 1000),
+            ip_address=ip_address,
+            user_agent=request.headers.get("user-agent", "")
+        )
+
+        return {
+            "success": True,
+            "data": {
+                "access_token": result["access_token"],
+                "expires_in": 60 * 60,
+                "user": result["user"]
+            },
+            "message": "登录成功"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"验证码登录失败: {e}")
+        raise HTTPException(status_code=500, detail=f"登录失败: {str(e)}")
+
+
+@router.post("/register-email")
+async def register_with_email(payload: RegisterEmailRequest, request: Request):
+    """邮箱注册"""
+    start_time = time.time()
+    ip_address = request.client.host if request.client else "unknown"
+
+    try:
+        # 验证邮箱格式
+        import re
+        if not re.match(r'^[^@]+@[^@]+\.[^@]+$', payload.email):
+            raise HTTPException(status_code=400, detail="邮箱格式不正确")
+
+        # 验证用户名格式
+        if len(payload.username) < 3 or len(payload.username) > 50:
+            raise HTTPException(status_code=400, detail="用户名长度为3-50个字符")
+
+        # 验证密码格式
+        if len(payload.password) < 6:
+            raise HTTPException(status_code=400, detail="密码至少6个字符")
+
+        # 先验证注册验证码
+        from app.services.auth_service import AuthService
+        redis_service = get_redis_service()
+        email = AuthService.normalize_email(payload.email)
+
+        key = f"verification:{email}:register"
+        stored_value = await redis_service.redis.get(key)
+
+        if not stored_value:
+            raise HTTPException(status_code=401, detail="验证码不存在或已过期")
+
+        code_hash, expires_at_str = stored_value.split(":")
+        expires_at = datetime.fromisoformat(expires_at_str)
+
+        if expires_at < now_tz():
+            await redis_service.redis.delete(key)
+            raise HTTPException(status_code=401, detail="验证码已过期")
+
+        expected_hash = AuthService.hash_verification_code(email, payload.code)
+        if code_hash != expected_hash:
+            raise HTTPException(status_code=401, detail="验证码错误")
+
+        # 验证码正确，删除已使用的验证码
+        await redis_service.redis.delete(key)
+
+        # 注册用户
+        result = await AuthService.register_with_email(
+            email=payload.email,
+            username=payload.username,
+            password=payload.password
+        )
+
+        if not result:
+            await log_operation(
+                user_id="unknown",
+                username=payload.username,
+                action_type=ActionType.USER_REGISTER,
+                action="邮箱注册",
+                details={"reason": "用户名或邮箱已存在", "ip": ip_address},
+                success=False,
+                error_message="用户名或邮箱已存在",
+                duration_ms=int((time.time() - start_time) * 1000),
+                ip_address=ip_address,
+                user_agent=request.headers.get("user-agent", "")
+            )
+            raise HTTPException(status_code=400, detail="用户名或邮箱已被使用")
+
+        await log_operation(
+            user_id=result["user"]["id"],
+            username=result["user"]["username"],
+            action_type=ActionType.USER_REGISTER,
+            action="邮箱注册",
+            details={"email": payload.email, "ip": ip_address},
+            success=True,
+            duration_ms=int((time.time() - start_time) * 1000),
+            ip_address=ip_address,
+            user_agent=request.headers.get("user-agent", "")
+        )
+
+        return {
+            "success": True,
+            "data": {
+                "access_token": result["access_token"],
+                "expires_in": 60 * 60,
+                "user": result["user"]
+            },
+            "message": "注册成功"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"邮箱注册失败: {e}")
+        raise HTTPException(status_code=500, detail=f"注册失败: {str(e)}")
