@@ -1166,6 +1166,53 @@ class SimpleAnalysisService:
             except Exception as notif_err:
                 logger.warning(f"⚠️ 创建通知失败(忽略): {notif_err}")
 
+            # 发送邮件报告（如果用户开启了邮件报告推送）
+            try:
+                from app.services.email_report_service import send_report_email_with_retry
+                from app.core.database import get_mongo_db
+
+                db = get_mongo_db()
+                user_doc = await db.users.find_one({"_id": ObjectId(user_id)})
+
+                if user_doc and user_doc.get("preferences", {}).get("email_report_enabled"):
+                    user_email = user_doc.get("email", "")
+                    stock_code = result.get("stock_symbol") or result.get("stock_code", "")
+                    stock_name = result.get("stock_name", "")
+                    trade_date = result.get("analysis_date", "")
+                    if hasattr(trade_date, "strftime"):
+                        trade_date = trade_date.strftime("%Y-%m-%d")
+
+                    decision = result.get("decision", {})
+                    direction = decision.get("direction", "") if isinstance(decision, dict) else ""
+                    confidence = result.get("confidence")
+                    target_price = decision.get("target_price") if isinstance(decision, dict) else None
+                    stop_loss = decision.get("stop_loss") if isinstance(decision, dict) else None
+                    state = result.get("state", {})
+
+                    if user_email and stock_code:
+                        logger.info(f"📧 [邮件报告] 准备发送邮件报告到 {user_email}")
+                        # 异步发送邮件，不阻塞主流程
+                        asyncio.create_task(send_report_email_with_retry(
+                            user_email=user_email,
+                            user_id=str(user_id),
+                            stock_code=stock_code,
+                            stock_name=stock_name,
+                            trade_date=trade_date,
+                            decision=decision,
+                            direction=direction,
+                            confidence=confidence,
+                            target_price=target_price,
+                            stop_loss=stop_loss,
+                            state=state,
+                        ))
+                        logger.info(f"📧 [邮件报告] 邮件发送任务已提交")
+                    else:
+                        logger.warning(f"⚠️ [邮件报告] 用户邮箱或股票代码为空，跳过发送")
+                else:
+                    logger.info(f"ℹ️ [邮件报告] 用户未开启邮件报告推送，跳过发送")
+            except Exception as email_err:
+                logger.warning(f"⚠️ [邮件报告] 发送邮件报告失败(忽略): {email_err}")
+
             logger.info(f"✅ 后台分析任务完成: {task_id}")
 
         except Exception as e:
