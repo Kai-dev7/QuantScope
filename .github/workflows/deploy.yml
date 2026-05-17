@@ -1,0 +1,141 @@
+name: Deploy to Tencent Cloud
+
+on:
+  push:
+    branches: [release]
+  workflow_dispatch:
+    inputs:
+      skip_frontend:
+        description: '跳过前端构建'
+        required: false
+        default: 'false'
+        type: boolean
+
+env:
+  NODE_VERSION: '20'
+  PYTHON_VERSION: '3.10'
+
+jobs:
+  # ── 前端构建 ────────────────────────────────────────────────
+  frontend:
+    name: Build Frontend
+    runs-on: ubuntu-latest
+    if: github.event.inputs.skip_frontend != 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'frontend-react/node_modules'
+
+      - name: Install Frontend Dependencies
+        run: |
+          cd frontend-react
+          npm ci
+
+      - name: Build Frontend
+        run: |
+          cd frontend-react
+          npm run build
+
+      - name: Upload Frontend Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend-react/dist
+          retention-days: 7
+
+  # ── 后端部署 ────────────────────────────────────────────────
+  deploy-backend:
+    name: Deploy Backend to Tencent Cloud
+    runs-on: ubuntu-latest
+    needs: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.TENCENT_HOST }}
+          username: root
+          key: ${{ secrets.TENCENT_SSH_KEY }}
+          port: 22
+          script: |
+            set -e
+
+            APP_DIR="/opt/QuantScope"
+            echo "=== 开始部署 $(date) ==="
+
+            # 拉取最新代码
+            if [[ -d "$APP_DIR/.git" ]]; then
+              cd "$APP_DIR"
+              git fetch origin release
+              git checkout release
+              git pull origin release
+            else
+              git clone -b release https://github.com/${{ github.repository }}.git "$APP_DIR"
+            fi
+
+            # 安装/更新依赖
+            cd "$APP_DIR"
+            pip install --upgrade pip -i https://mirrors.aliyun.com/pypi/simple/
+            pip install -e . gunicorn uvicorn httptools uvloop \
+              -i https://mirrors.aliyun.com/pypi/simple/ --quiet
+
+            # 上传前端构建产物
+            echo "=== 同步前端 ==="
+
+            # 下载 frontend artifact
+            ARTIFFACT_URL="${{ needs.frontend.outputs.artifact_url || 'N/A' }}"
+            if [[ "$ARTIFFACT_URL" != "N/A" ]] && command -v curl &> /dev/null; then
+              curl -sL "https://${{ github.server_url }}/api/v3/actions/artifacts/${{ needs.frontend.outputs.artifact_id }}/zip" \
+                -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+                -o /tmp/frontend.zip
+              unzip -q /tmp/frontend.zip -d /opt/QuantScope/frontend-react/
+              rm -f /tmp/frontend.zip
+            fi
+
+            # 重启后端服务
+            echo "=== 重启后端 ==="
+            systemctl restart quantscope
+
+            # 等待并验证
+            sleep 10
+            if curl -sf http://127.0.0.1:8000/api/health; then
+              echo "=== 部署成功 ==="
+            else
+              echo "=== 健康检查失败 ==="
+              journalctl -u quantscope -n 20 --no-pager
+              exit 1
+            fi
+
+  # ── 纯后端部署（跳过前端）────────────────────────────────────
+  deploy-backend-only:
+    name: Deploy Backend Only
+    runs-on: ubuntu-latest
+    if: github.event.inputs.skip_frontend == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.TENCENT_HOST }}
+          username: root
+          key: ${{ secrets.TENCENT_SSH_KEY }}
+          port: 22
+          script: |
+            set -e
+            cd /opt/QuantScope
+            git fetch origin release
+            git checkout release
+            git pull origin release
+
+            pip install -e . gunicorn uvicorn httptools uvloop \
+              -i https://mirrors.aliyun.com/pypi/simple/ --quiet
+
+            systemctl restart quantscope
+            sleep 10
+            curl -sf http://127.0.0.1:8000/api/health

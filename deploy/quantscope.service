@@ -1,0 +1,60 @@
+# QuantScope Systemd 服务文件（腾讯云生产环境）
+# 用法:
+#   cp deploy/quantscope.service /etc/systemd/system/quantscope.service
+#   systemctl daemon-reload
+#   systemctl enable quantscope
+#   systemctl start quantscope
+
+[Unit]
+Description=QuantScope Stock Analysis Backend (Python/FastAPI)
+Documentation=https://github.com/<your-username>/QuantScope
+After=network.target redis-server.service
+Wants=redis-server.service
+
+[Service]
+Type=notify
+# 使用 Gunicorn + UvicornWorker 获得更好的并发性能
+# 4 workers 适合 1-2GB 内存的腾讯云轻量
+User=root
+Group=root
+WorkingDirectory=/opt/QuantScope
+
+# 加载环境变量
+EnvironmentFile=/opt/QuantScope/.env.cloud
+
+# 启动命令
+ExecStart=/usr/local/bin/gunicorn app.main:app \
+    --workers 4 \
+    --worker-class uvicorn.workers.UvicornWorker \
+    --bind 127.0.0.1:8000 \
+    --timeout 600 \
+    --keep-alive 120 \
+    --access-logfile /opt/QuantScope/logs/access.log \
+    --error-logfile /opt/QuantScope/logs/error.log \
+    --log-level info \
+    --capture-output
+
+# 重启策略
+Restart=always
+RestartSec=5
+
+# 日志输出
+StandardOutput=append:/opt/QuantScope/logs/stdout.log
+StandardError=append:/opt/QuantScope/logs/stderr.log
+
+# 启动超时（首次启动要初始化模型等，需要较长时间）
+TimeoutStartSec=300
+TimeoutStopSec=30
+
+# 资源限制（防止 OOM）
+MemoryMax=1500M
+MemorySwapMax=500M
+
+# 安全加固（可选，限制可访问的目录）
+# ProtectSystem=strict
+# ProtectHome=true
+# ReadOnlyPaths=/opt/QuantScope/logs /opt/QuantScope/data
+# NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
