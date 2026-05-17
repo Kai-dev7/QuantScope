@@ -41,6 +41,15 @@ QuantScope 重点解决三类问题：
 - 支持 OpenAI、Google、DeepSeek、通义千问等多类模型接入
 - 支持自定义 OpenAI 兼容端点
 
+## 产品截图
+
+| 页面 | 说明 |
+|------|------|
+| ![登录页](./screenshots/01-login.png) | **用户登录** — 支持用户名密码认证，进入工作台 |
+| ![股票分析](./screenshots/02-stock-analysis.png) | **单股分析** — 输入股票代码，提交深度分析任务 |
+| ![分析流程](./screenshots/03-analysis-pipeline.png) | **多阶段流水线** — 实时展示分析师节点执行状态 |
+| ![分析结果](./screenshots/04-analysis-result.png) | **完整报告** — 查看最终研究报告与数据洞察 |
+
 ## 技术架构
 
 当前版本以 `FastAPI + Vue 3 + MongoDB + Redis` 为主架构：
