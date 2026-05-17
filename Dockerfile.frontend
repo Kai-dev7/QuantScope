@@ -4,21 +4,21 @@
 # 构建阶段：使用Node.js 22.x（与项目开发环境一致）
 FROM node:22-alpine AS build
 
-ENV NODE_ENV=production
+ENV NODE_ENV=development
 WORKDIR /app/frontend
 
 # 启用Corepack并使用Yarn 1.22.22（项目使用的包管理器）
 RUN corepack enable && corepack prepare yarn@1.22.22 --activate
 
-# 复制package.json、yarn.lock和.yarnrc（配置国内镜像源）
-COPY frontend/package.json frontend/yarn.lock frontend/.yarnrc ./
+# 复制package.json和package-lock.json
+COPY frontend-react/package.json frontend-react/package-lock.json ./
 
-# 安装依赖（使用yarn.lock确保版本一致）
-# 增加网络超时时间到5分钟，适应跨平台构建的网络延迟
-RUN yarn install --frozen-lockfile --production=false --network-timeout 300000
+# 安装依赖（处理 rollup optional native dep 的已知 npm bug）
+RUN npm install --legacy-peer-deps --include=optional
 
 # 复制前端源代码
-COPY frontend/. ./
+# COPY frontend/. ./
+COPY frontend-react/. ./
 
 # 复制根目录的静态资源与文档到构建环境
 # - assets: 提供 /assets/* 静态资源（前端使用绝对路径）
@@ -27,7 +27,7 @@ COPY assets /app/frontend/public/assets
 COPY docs /app/docs
 
 # 构建生产版本（跳过类型检查以加快构建速度）
-RUN yarn vite build
+RUN npm run build
 
 # 运行阶段：使用Nginx提供静态文件服务
 FROM nginx:alpine AS runtime

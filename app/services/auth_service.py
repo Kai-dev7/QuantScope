@@ -188,7 +188,8 @@ class AuthService:
             logger.warning(f"❌ 验证码不存在或已过期: {email}")
             return None
 
-        code_hash, expires_at_str = stored_value.split(":")
+        code_hash = stored_value[:64]
+        expires_at_str = stored_value[65:]
         expires_at = datetime.fromisoformat(expires_at_str)
 
         # 检查是否过期

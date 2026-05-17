@@ -26,7 +26,8 @@ import asyncio
 from pathlib import Path
 
 from app.core.config import settings
-from app.core.database import init_db, close_db
+from app.core.database import init_db, close_db, get_redis_client as _get_redis_client
+from app.core.redis_client import init_redis as _init_redis, get_redis as _get_redis
 from app.core.logging_config import setup_logging
 from app.routers import auth_db as auth, analysis, screening, queue, sse, health, favorites, config, reports, database, operation_logs, tags, tushare_init, akshare_init, baostock_init, historical_data, multi_period_sync, financial_data, news_data, social_media, internal_messages, usage_statistics, model_capabilities, cache, logs, sessions, quality, kline, scheduled_analysis
 from app.routers import sync as sync_router, multi_source_sync
@@ -229,6 +230,15 @@ async def lifespan(app: FastAPI):
         raise
 
     await init_db()
+
+    # 同步初始化 redis_client 到 redis_client.py 模块（维持两套全局变量的一致性）
+    try:
+        from app.core import redis_client as redis_client_module
+        redis_client_module.redis_client = _get_redis_client()
+        redis_client_module.redis_pool = None  # database.py 的连接池不需要共享
+        logger.info("✅ redis_client.py 全局变量已与 database.py 同步")
+    except Exception as e:
+        logger.warning(f"⚠️  redis_client 同步失败: {e}")
 
     #  配置桥接：将统一配置写入环境变量，供 TradingAgents 核心库使用
     try:

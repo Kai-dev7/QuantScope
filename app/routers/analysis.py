@@ -167,7 +167,11 @@ async def get_task_status_new(
             db = get_mongo_db()
 
             # 首先从analysis_tasks集合中查找（正在进行的任务）
-            task_result = await db.analysis_tasks.find_one({"task_id": task_id})
+            # 🔒 加入 user_id 隔离：只能查看自己的任务
+            task_result = await db.analysis_tasks.find_one({
+                "task_id": task_id,
+                "$or": [{"user_id": user["id"]}, {"user": user["id"]}]
+            })
 
             if task_result:
                 logger.info(f"✅ [STATUS] 从analysis_tasks找到任务: {task_id}")
@@ -207,7 +211,11 @@ async def get_task_status_new(
                 }
 
             # 如果analysis_tasks中没有找到，再从analysis_reports集合中查找（已完成的任务）
-            mongo_result = await db.analysis_reports.find_one({"task_id": task_id})
+            # 🔒 加入 user_id 隔离
+            mongo_result = await db.analysis_reports.find_one({
+                "task_id": task_id,
+                "$or": [{"user_id": user["id"]}, {"user": user["id"]}]
+            })
 
             if mongo_result:
                 logger.info(f"✅ [STATUS] 从analysis_reports找到任务: {task_id}")
@@ -293,11 +301,18 @@ async def get_task_result(
             db = get_mongo_db()
 
             # 从analysis_reports集合中查找（优先使用 task_id 匹配）
-            mongo_result = await db.analysis_reports.find_one({"task_id": task_id})
+            # 🔒 加入 user_id 隔离
+            mongo_result = await db.analysis_reports.find_one({
+                "task_id": task_id,
+                "$or": [{"user_id": user["id"]}, {"user": user["id"]}]
+            })
 
             if not mongo_result:
                 # 兼容旧数据：旧记录可能没有 task_id，但 analysis_id 存在于 analysis_tasks.result
-                tasks_doc_for_id = await db.analysis_tasks.find_one({"task_id": task_id}, {"result.analysis_id": 1})
+                tasks_doc_for_id = await db.analysis_tasks.find_one(
+                    {"task_id": task_id, "$or": [{"user_id": user["id"]}, {"user": user["id"]}]},
+                    {"result.analysis_id": 1}
+                )
                 analysis_id = tasks_doc_for_id.get("result", {}).get("analysis_id") if tasks_doc_for_id else None
                 if analysis_id:
                     logger.info(f"🔎 [RESULT] 按analysis_id兜底查询 analysis_reports: {analysis_id}")
@@ -772,11 +787,12 @@ async def list_all_tasks(
     limit: int = Query(20, ge=1, le=100, description="返回数量限制"),
     offset: int = Query(0, ge=0, description="偏移量")
 ):
-    """获取所有任务列表（不限用户）"""
+    """获取当前用户的任务列表"""
     try:
-        logger.info(f"📋 查询所有任务列表")
+        logger.info(f"📋 查询用户任务列表: {user['id']}")
 
-        tasks = await get_simple_analysis_service().list_all_tasks(
+        tasks = await get_simple_analysis_service().list_user_tasks(
+            user_id=user["id"],
             status=status,
             limit=limit,
             offset=offset

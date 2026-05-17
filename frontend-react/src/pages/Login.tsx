@@ -422,7 +422,7 @@ export default function Login() {
 
             {mode === 'login' && (
               <p className="text-center text-white/30 text-xs mt-4">
-                默认账号: admin / admin
+                默认账号: admin / admin123
               </p>
             )}
           </div>

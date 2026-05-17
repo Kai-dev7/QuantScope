@@ -39,6 +39,10 @@ services:
       # API配置
       API_HOST: "0.0.0.0"
       API_PORT: "8000"
+      # Redis配置（供 QuantScope 后端使用）
+      REDIS_HOST: "redis"
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: "tradingagents123"
       # CORS配置
       CORS_ORIGINS: "http://localhost:3000,http://localhost:8080,http://localhost:5173"
     depends_on:

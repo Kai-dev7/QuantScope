@@ -1,4 +1,5 @@
 import { NavLink, useLocation } from 'react-router-dom'
+import { toast } from 'sonner'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import {
@@ -115,7 +116,10 @@ export default function Sidebar() {
 
         {/* Logout */}
         <button
-          onClick={logout}
+          onClick={() => {
+            toast.success('已退出登录')
+            logout()
+          }}
           className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 text-white/50 hover:text-red-400 hover:bg-red-500/10"
         >
           <LogOut className="w-5 h-5 flex-shrink-0" />
