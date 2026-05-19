@@ -596,9 +596,9 @@ export default function Analysis() {
         <AnalystReportViewer
           tabs={analystTabs}
           activeTab={selectedNodeId || undefined}
+          onTabChange={(tabId) => setSelectedNodeId(tabId)}
         />
       </Drawer>
     </div>
   )
 }
-

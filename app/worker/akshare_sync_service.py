@@ -275,11 +275,22 @@ class AKShareSyncService:
             stats["total_processed"] = len(symbols)
             logger.info(f"📊 准备同步 {len(symbols)} 只股票的行情")
 
-            # 🔥 优化：如果只同步1只股票，直接调用单个股票接口，不走批量接口
+            # 单股同步优先使用全市场快照接口；单股盘口接口在网络不稳定时更容易失败。
             if len(symbols) == 1:
-                logger.info(f"📈 单个股票同步，直接使用 get_stock_quotes 接口")
                 symbol = symbols[0]
-                success = await self._get_and_save_quotes(symbol)
+                logger.info("📈 单个股票同步，优先使用全市场快照接口")
+                quotes_map = await self.provider.get_batch_stock_quotes([symbol])
+                quotes = quotes_map.get(symbol) if quotes_map else None
+
+                if quotes:
+                    success = await self._save_quotes(symbol, quotes)
+                else:
+                    logger.warning("⚠️ 全市场快照未获取到 %s，回退到单股接口", symbol)
+                    success = await self._get_and_save_quotes(symbol)
+
+                if not success:
+                    success = await self._refresh_quote_from_latest_daily(symbol)
+
                 if success:
                     stats["success_count"] = 1
                 else:
@@ -487,6 +498,37 @@ class AKShareSyncService:
 
         return batch_stats
     
+    async def _save_quotes(self, symbol: str, quotes: Any) -> bool:
+        """保存行情数据到 market_quotes。"""
+        if not quotes:
+            return False
+
+        if hasattr(quotes, 'model_dump'):
+            quotes_data = quotes.model_dump()
+        elif hasattr(quotes, 'dict'):
+            quotes_data = quotes.dict()
+        else:
+            quotes_data = dict(quotes)
+
+        if "symbol" not in quotes_data:
+            quotes_data["symbol"] = symbol
+        if "code" not in quotes_data:
+            quotes_data["code"] = symbol
+
+        result = await self.db.market_quotes.update_one(
+            {"code": symbol},
+            {"$set": quotes_data},
+            upsert=True
+        )
+        logger.info(
+            "✅ %s 行情已保存到数据库 (matched=%s, modified=%s, upserted_id=%s)",
+            symbol,
+            result.matched_count,
+            result.modified_count,
+            result.upserted_id,
+        )
+        return True
+
     async def _get_and_save_quotes(self, symbol: str) -> bool:
         """获取并保存单个股票行情"""
         try:
@@ -527,6 +569,52 @@ class AKShareSyncService:
             return False
         except Exception as e:
             logger.error(f"❌ 获取 {symbol} 行情失败: {e}", exc_info=True)
+            return False
+
+    async def _refresh_quote_from_latest_daily(self, symbol: str) -> bool:
+        """外部实时接口失败时，用最新日线刷新 market_quotes，避免分析流程硬失败。"""
+        try:
+            latest_doc = await self.db.stock_daily_quotes.find_one(
+                {"code": symbol},
+                sort=[("trade_date", -1)]
+            )
+            if not latest_doc:
+                logger.warning("⚠️ %s 无最新日线数据，无法兜底刷新 market_quotes", symbol)
+                return False
+
+            quote_data = {
+                "code": symbol,
+                "symbol": symbol,
+                "name": latest_doc.get("name", f"股票{symbol}"),
+                "price": latest_doc.get("close"),
+                "close": latest_doc.get("close"),
+                "current_price": latest_doc.get("close"),
+                "change": latest_doc.get("change") or latest_doc.get("change_amount"),
+                "change_percent": latest_doc.get("change_percent") or latest_doc.get("pct_chg"),
+                "pct_chg": latest_doc.get("pct_chg") or latest_doc.get("change_percent"),
+                "volume": latest_doc.get("volume"),
+                "amount": latest_doc.get("amount"),
+                "open": latest_doc.get("open"),
+                "high": latest_doc.get("high"),
+                "low": latest_doc.get("low"),
+                "pre_close": latest_doc.get("pre_close"),
+                "trade_date": latest_doc.get("trade_date"),
+                "updated_at": datetime.utcnow(),
+                "full_symbol": self.provider._get_full_symbol(symbol) if self.provider else symbol,
+                "market_info": self.provider._get_market_info(symbol) if self.provider else {},
+                "data_source": "stock_daily_quotes_fallback",
+                "last_sync": datetime.utcnow(),
+                "sync_status": "fallback_success",
+            }
+            await self.db.market_quotes.update_one(
+                {"code": symbol},
+                {"$set": quote_data},
+                upsert=True
+            )
+            logger.info("✅ %s 已用最新日线刷新 market_quotes 兜底", symbol)
+            return True
+        except Exception as e:
+            logger.warning("⚠️ %s 日线兜底刷新 market_quotes 失败: %s", symbol, e)
             return False
 
     async def sync_historical_data(
