@@ -222,7 +222,8 @@ class SchedulerService:
         self,
         job_id: str,
         limit: int = 20,
-        offset: int = 0
+        offset: int = 0,
+        user_id: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """
         获取任务执行历史
@@ -237,8 +238,11 @@ class SchedulerService:
         """
         try:
             db = self._get_db()
+            query = {"job_id": job_id}
+            if user_id:
+                query["user_id"] = user_id
             cursor = db.scheduler_history.find(
-                {"job_id": job_id}
+                query
             ).sort("timestamp", -1).skip(offset).limit(limit)
             
             history = []
@@ -251,7 +255,7 @@ class SchedulerService:
             logger.error(f"❌ 获取任务 {job_id} 执行历史失败: {e}")
             return []
     
-    async def count_job_history(self, job_id: str) -> int:
+    async def count_job_history(self, job_id: str, user_id: Optional[str] = None) -> int:
         """
         统计任务执行历史数量
         
@@ -263,7 +267,10 @@ class SchedulerService:
         """
         try:
             db = self._get_db()
-            count = await db.scheduler_history.count_documents({"job_id": job_id})
+            query = {"job_id": job_id}
+            if user_id:
+                query["user_id"] = user_id
+            count = await db.scheduler_history.count_documents(query)
             return count
         except Exception as e:
             logger.error(f"❌ 统计任务 {job_id} 执行历史失败: {e}")
@@ -274,7 +281,8 @@ class SchedulerService:
         limit: int = 50,
         offset: int = 0,
         job_id: Optional[str] = None,
-        status: Optional[str] = None
+        status: Optional[str] = None,
+        user_id: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """
         获取所有任务执行历史
@@ -297,6 +305,8 @@ class SchedulerService:
                 query["job_id"] = job_id
             if status:
                 query["status"] = status
+            if user_id:
+                query["user_id"] = user_id
             
             cursor = db.scheduler_history.find(query).sort("timestamp", -1).skip(offset).limit(limit)
             
@@ -313,7 +323,8 @@ class SchedulerService:
     async def count_all_history(
         self,
         job_id: Optional[str] = None,
-        status: Optional[str] = None
+        status: Optional[str] = None,
+        user_id: Optional[str] = None
     ) -> int:
         """
         统计所有任务执行历史数量
@@ -334,6 +345,8 @@ class SchedulerService:
                 query["job_id"] = job_id
             if status:
                 query["status"] = status
+            if user_id:
+                query["user_id"] = user_id
 
             count = await db.scheduler_history.count_documents(query)
             return count
@@ -347,7 +360,8 @@ class SchedulerService:
         status: Optional[str] = None,
         is_manual: Optional[bool] = None,
         limit: int = 50,
-        offset: int = 0
+        offset: int = 0,
+        user_id: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """
         获取任务执行历史
@@ -371,6 +385,8 @@ class SchedulerService:
                 query["job_id"] = job_id
             if status:
                 query["status"] = status
+            if user_id:
+                query["user_id"] = user_id
 
             # 处理 is_manual 过滤
             if is_manual is not None:
@@ -410,7 +426,8 @@ class SchedulerService:
         self,
         job_id: Optional[str] = None,
         status: Optional[str] = None,
-        is_manual: Optional[bool] = None
+        is_manual: Optional[bool] = None,
+        user_id: Optional[str] = None
     ) -> int:
         """
         统计任务执行历史数量
@@ -432,6 +449,8 @@ class SchedulerService:
                 query["job_id"] = job_id
             if status:
                 query["status"] = status
+            if user_id:
+                query["user_id"] = user_id
 
             # 处理 is_manual 过滤
             if is_manual is not None:
@@ -535,7 +554,7 @@ class SchedulerService:
             logger.error(f"❌ 标记执行记录为失败失败: {e}")
             return False
 
-    async def delete_execution(self, execution_id: str) -> bool:
+    async def delete_execution(self, execution_id: str, user_id: Optional[str] = None) -> bool:
         """
         删除执行记录
 
@@ -550,7 +569,10 @@ class SchedulerService:
             db = self._get_db()
 
             # 查找执行记录
-            execution = await db.scheduler_executions.find_one({"_id": ObjectId(execution_id)})
+            query = {"_id": ObjectId(execution_id)}
+            if user_id:
+                query["user_id"] = user_id
+            execution = await db.scheduler_executions.find_one(query)
             if not execution:
                 logger.error(f"❌ 执行记录不存在: {execution_id}")
                 return False
@@ -561,7 +583,7 @@ class SchedulerService:
                 return False
 
             # 删除记录
-            result = await db.scheduler_executions.delete_one({"_id": ObjectId(execution_id)})
+            result = await db.scheduler_executions.delete_one({"_id": ObjectId(execution_id), "user_id": user_id} if user_id else {"_id": ObjectId(execution_id)})
 
             if result.deleted_count > 0:
                 logger.info(f"✅ 已删除执行记录: {execution.get('job_name', execution.get('job_id'))} (execution_id={execution_id})")
@@ -574,7 +596,7 @@ class SchedulerService:
             logger.error(f"❌ 删除执行记录失败: {e}")
             return False
 
-    async def get_job_execution_stats(self, job_id: str) -> Dict[str, Any]:
+    async def get_job_execution_stats(self, job_id: str, user_id: Optional[str] = None) -> Dict[str, Any]:
         """
         获取任务执行统计信息
 
@@ -588,8 +610,11 @@ class SchedulerService:
             db = self._get_db()
 
             # 统计各状态的执行次数
+            match_query = {"job_id": job_id}
+            if user_id:
+                match_query["user_id"] = user_id
             pipeline = [
-                {"$match": {"job_id": job_id}},
+                {"$match": match_query},
                 {"$group": {
                     "_id": "$status",
                     "count": {"$sum": 1},
@@ -615,8 +640,11 @@ class SchedulerService:
                     stats["avg_execution_time"] = round(doc["avg_execution_time"], 2)
 
             # 获取最近一次执行
+            last_execution_query = {"job_id": job_id}
+            if user_id:
+                last_execution_query["user_id"] = user_id
             last_execution = await db.scheduler_executions.find_one(
-                {"job_id": job_id},
+                last_execution_query,
                 sort=[("timestamp", -1)]
             )
 

@@ -40,6 +40,9 @@ from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.graph.trading_graph import TradingAgentsGraph
 from tradingagents.skills import SkillMatchContext, SkillSelector, run_quality_gates
 from app.services.sessions import session_event_store, session_runtime_service
+from app.services.sessions.agent_state_checkpoint import (deserialize_checkpoint_state,
+                                                          next_node_after)
+from app.services.sessions.checkpoint_store import session_checkpoint_store
 
 # 股票基础信息获取（用于补充显示名称）
 try:
@@ -959,11 +962,126 @@ class SimpleAnalysisService:
             logger.error(f"❌ 创建分析任务失败: {e}")
             raise
 
+    async def retry_failed_task(
+        self,
+        task_id: str,
+        user_id: str,
+        resume_from_checkpoint: bool = True
+    ) -> Dict[str, Any]:
+        """基于失败任务创建一个新的分析任务。
+
+        当前执行链路没有可复用的 checkpoint 续跑入口，因此这里采用保守策略：
+        校验原任务归属和失败状态，从 MongoDB 还原股票与分析参数，再创建一个新任务。
+        """
+        db = get_mongo_db()
+
+        uid_candidates: List[Any] = [user_id]
+        try:
+            uid_candidates.append(ObjectId(user_id))
+        except Exception:
+            pass
+
+        task_doc = await db.analysis_tasks.find_one({
+            "task_id": task_id,
+            "$or": [
+                {"user_id": {"$in": uid_candidates}},
+                {"user": {"$in": uid_candidates}},
+            ],
+        })
+
+        if not task_doc:
+            raise ValueError("任务不存在或无权重试")
+
+        status = str(task_doc.get("status", "")).lower()
+        if status not in {"failed", "cancelled"}:
+            raise ValueError(f"只有失败或已取消的任务可以重试，当前状态: {status or 'unknown'}")
+
+        stock_code = (
+            task_doc.get("stock_symbol")
+            or task_doc.get("stock_code")
+            or task_doc.get("symbol")
+        )
+        if not stock_code:
+            raise ValueError("原任务缺少股票代码，无法重试")
+
+        raw_parameters = task_doc.get("parameters") or {}
+        if not raw_parameters:
+            planner_plan = task_doc.get("planner_plan") or {}
+            raw_parameters = {
+                "selected_analysts": planner_plan.get("analysts") or AnalysisParameters().selected_analysts,
+                "research_depth": planner_plan.get("depth") or AnalysisParameters().research_depth,
+                "custom_prompt": planner_plan.get("user_goal") or None,
+            }
+
+        parameters = AnalysisParameters(**raw_parameters)
+        request = SingleAnalysisRequest(symbol=str(stock_code), parameters=parameters)
+        create_result = await self.create_analysis_task(user_id, request)
+        new_task_id = create_result["task_id"]
+
+        resume_payload: Dict[str, Any] = {}
+        if resume_from_checkpoint:
+            checkpoint = await session_checkpoint_store.get_latest_checkpoint(task_id)
+            recoverable_state = (checkpoint or {}).get("recoverable_state") or {}
+            serialized_state = recoverable_state.get("state")
+            state_summary = (checkpoint or {}).get("state_summary") or {}
+            completed_node = state_summary.get("node_name", "")
+            resume_node = next_node_after(completed_node)
+            is_local_parallel_checkpoint = state_summary.get("mode") == "parallel"
+            if serialized_state and resume_node and resume_node != "__end__" and not is_local_parallel_checkpoint:
+                resume_payload = {
+                    "checkpoint_id": checkpoint.get("checkpoint_id"),
+                    "completed_node": completed_node,
+                    "resume_from_node": resume_node,
+                    "resume_state": deserialize_checkpoint_state(serialized_state),
+                }
+            elif checkpoint:
+                logger.info(
+                    f"⚠️ checkpoint 不包含可恢复 state 或已在末尾，降级为完整重跑: "
+                    f"task_id={task_id}, checkpoint={checkpoint.get('checkpoint_id')}, node={completed_node}"
+                )
+
+        await db.analysis_tasks.update_one(
+            {"task_id": new_task_id},
+            {"$set": {
+                "retry_of_task_id": task_id,
+                "retry_count": int(task_doc.get("retry_count", 0) or 0) + 1,
+                "resume_from_checkpoint_requested": resume_from_checkpoint,
+                "resume_from_checkpoint": bool(resume_payload),
+                "resume_checkpoint_id": resume_payload.get("checkpoint_id"),
+                "resume_completed_node": resume_payload.get("completed_node"),
+                "resume_from_node": resume_payload.get("resume_from_node"),
+                "updated_at": datetime.utcnow(),
+            }}
+        )
+
+        await db.analysis_tasks.update_one(
+            {"task_id": task_id},
+            {"$set": {
+                "retried_as_task_id": new_task_id,
+                "updated_at": datetime.utcnow(),
+            }}
+        )
+
+        return {
+            **create_result,
+            "task_id": new_task_id,
+            "original_task_id": task_id,
+            "request": request,
+            "resume_from_checkpoint": bool(resume_payload),
+            "resume_checkpoint_id": resume_payload.get("checkpoint_id"),
+            "resume_completed_node": resume_payload.get("completed_node"),
+            "resume_from_node": resume_payload.get("resume_from_node"),
+            "resume_state": resume_payload.get("resume_state"),
+            "message": "任务已重新创建并加入后台执行",
+        }
+
     async def execute_analysis_background(
         self,
         task_id: str,
         user_id: str,
-        request: SingleAnalysisRequest
+        request: SingleAnalysisRequest,
+        resume_state: Optional[Dict[str, Any]] = None,
+        resume_from_node: Optional[str] = None,
     ):
         """在后台执行分析任务"""
         # 🔧 使用 get_symbol() 方法获取股票代码（兼容 symbol 和 stock_code 字段）
@@ -981,6 +1099,8 @@ class SimpleAnalysisService:
         progress_tracker = None
         try:
             logger.info(f"🚀 开始后台执行分析任务: {task_id}")
+            if resume_state and resume_from_node:
+                logger.info(f"🔁 本次分析从 checkpoint 恢复: task_id={task_id}, resume_from_node={resume_from_node}")
 
             # 🔍 验证股票代码是否存在
             logger.info(f"🔍 开始验证股票代码: {stock_code}")
@@ -1114,7 +1234,14 @@ class SimpleAnalysisService:
             await self._update_task_status(task_id, AnalysisStatus.PROCESSING, 20)
 
             # 执行实际的分析
-            result = await self._execute_analysis_sync(task_id, user_id, request, progress_tracker)
+            result = await self._execute_analysis_sync(
+                task_id,
+                user_id,
+                request,
+                progress_tracker,
+                resume_state=resume_state,
+                resume_from_node=resume_from_node,
+            )
 
             # 标记进度跟踪器完成（在线程中执行）
             await asyncio.to_thread(progress_tracker.mark_completed)
@@ -1268,7 +1395,9 @@ class SimpleAnalysisService:
         task_id: str,
         user_id: str,
         request: SingleAnalysisRequest,
-        progress_tracker: Optional[RedisProgressTracker] = None
+        progress_tracker: Optional[RedisProgressTracker] = None,
+        resume_state: Optional[Dict[str, Any]] = None,
+        resume_from_node: Optional[str] = None,
     ) -> Dict[str, Any]:
         """同步执行分析（在共享线程池中运行）"""
         # 🔧 使用共享线程池，支持多个任务并发执行
@@ -1281,7 +1410,9 @@ class SimpleAnalysisService:
             task_id,
             user_id,
             request,
-            progress_tracker
+            progress_tracker,
+            resume_state,
+            resume_from_node,
         )
         logger.info(f"✅ [线程池] 分析任务执行完成: {task_id}")
         return result
@@ -1291,7 +1422,9 @@ class SimpleAnalysisService:
         task_id: str,
         user_id: str,
         request: SingleAnalysisRequest,
-        progress_tracker: Optional[RedisProgressTracker] = None
+        progress_tracker: Optional[RedisProgressTracker] = None,
+        resume_state: Optional[Dict[str, Any]] = None,
+        resume_from_node: Optional[str] = None,
     ) -> Dict[str, Any]:
         """同步执行分析的具体实现"""
         try:
@@ -1303,6 +1436,8 @@ class SimpleAnalysisService:
 
             thread_logger.info(f"🔄 [线程池] 开始执行分析: {task_id} - {request.get_symbol()}")
             logger.info(f"🔄 [线程池] 开始执行分析: {task_id} - {request.get_symbol()}")
+            if resume_state and resume_from_node:
+                logger.info(f"🔁 [线程池] 从 checkpoint 恢复执行: resume_from_node={resume_from_node}")
 
             # 🔧 根据 RedisProgressTracker 的步骤权重计算准确的进度
             # 基础准备阶段 (10%): 0.03 + 0.02 + 0.01 + 0.02 + 0.02 = 0.10
@@ -1784,6 +1919,8 @@ class SimpleAnalysisService:
                 task_id=task_id,
                 planner_plan=config.get("planner_plan"),
                 focus_hint=config.get("focus_hint"),
+                resume_state=resume_state,
+                resume_from_node=resume_from_node,
             )
 
             logger.info(f"✅ trading_graph.propagate 执行完成")
@@ -2183,9 +2320,9 @@ class SimpleAnalysisService:
             # 抛出包含友好错误信息的异常
             raise Exception(user_friendly_error) from e
 
-    async def get_task_status(self, task_id: str) -> Optional[Dict[str, Any]]:
+    async def get_task_status(self, task_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """获取任务状态"""
-        logger.info(f"🔍 查询任务状态: {task_id}")
+        logger.info(f"🔍 查询任务状态: {task_id}, user_id: {user_id}")
         logger.info(f"🔍 当前服务实例ID: {id(self)}")
         logger.info(f"🔍 内存管理器实例ID: {id(self.memory_manager)}")
 
@@ -2266,7 +2403,47 @@ class SimpleAnalysisService:
                 else:
                     logger.info(f"⚠️ 未找到进度信息: {task_id}")
         else:
-            logger.warning(f"❌ 未找到任务: {task_id}")
+            logger.warning(f"❌ 未在内存中找到任务: {task_id}")
+
+            # 🔧 P1修复：添加MongoDB兜底查询，使用user_id过滤
+            if user_id:
+                try:
+                    from app.core.database import get_mongo_db
+                    from bson import ObjectId
+
+                    db = get_mongo_db()
+                    collection = db["analysis_tasks"]
+
+                    # 构建user_id查询条件（兼容user_id和user字段）
+                    uid_candidates: List[Any] = [user_id]
+                    try:
+                        uid_candidates.append(ObjectId(user_id))
+                    except Exception:
+                        pass
+
+                    base_condition = {"$in": uid_candidates}
+                    or_conditions: List[Dict[str, Any]] = [
+                        {"user_id": base_condition},
+                        {"user": base_condition}
+                    ]
+                    query = {
+                        "$or": or_conditions,
+                        "task_id": task_id
+                    }
+
+                    logger.info(f"🔍 [MongoDB兜底] 执行查询: {query}")
+                    doc = await collection.find_one(query)
+
+                    if doc:
+                        doc.pop("_id", None)
+                        result = dict(doc)
+                        logger.info(f"✅ [MongoDB兜底] 找到任务: {task_id}")
+                    else:
+                        logger.warning(f"❌ [MongoDB兜底] 未找到任务: {task_id}")
+                except Exception as mongo_err:
+                    logger.error(f"❌ [MongoDB兜底] 查询失败: {mongo_err}")
+            else:
+                logger.warning(f"❌ 缺少user_id，无法执行MongoDB兜底查询")
 
         return result
 
@@ -2730,6 +2907,12 @@ class SimpleAnalysisService:
             stock_symbol = result.get('stock_symbol') or result.get('stock_code', 'UNKNOWN')
             analysis_id = f"{stock_symbol}_{timestamp.strftime('%Y%m%d_%H%M%S')}"
 
+            task_doc = await db.analysis_tasks.find_one(
+                {"task_id": task_id},
+                {"user_id": 1, "user": 1}
+            )
+            report_user_id = task_doc.get("user_id", task_doc.get("user")) if task_doc else None
+
             # 处理reports字段 - 从state中提取所有分析报告
             reports = {}
             if 'state' in result:
@@ -2952,6 +3135,8 @@ class SimpleAnalysisService:
 
                 # API特有字段
                 "task_id": task_id,
+                "user_id": report_user_id,
+                "user": report_user_id,
                 "recommendation": result.get("recommendation", ""),
                 "confidence_score": result.get("confidence_score", 0.0),
                 "risk_level": result.get("risk_level", "中等"),

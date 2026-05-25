@@ -54,6 +54,7 @@ class LLMProvider(BaseModel):
     api_key: Optional[str] = Field(None, description="API密钥")
     api_secret: Optional[str] = Field(None, description="API密钥（某些厂家需要）")
     extra_config: Dict[str, Any] = Field(default_factory=dict, description="额外配置参数")
+    user_id: Optional[str] = Field(None, description="所属用户ID，None表示系统全局厂家，所有用户共享")
 
     # 🆕 聚合渠道支持
     is_aggregator: bool = Field(default=False, description="是否为聚合渠道（如302.AI、OpenRouter）")
@@ -91,6 +92,7 @@ class ModelCatalog(BaseModel):
     provider: str = Field(..., description="厂家标识")
     provider_name: str = Field(..., description="厂家显示名称")
     models: List[ModelInfo] = Field(default_factory=list, description="模型列表")
+    user_id: Optional[str] = Field(None, description="所属用户ID，None表示系统全局模型目录，所有用户共享")
     created_at: Optional[datetime] = Field(default_factory=now_tz)
     updated_at: Optional[datetime] = Field(default_factory=now_tz)
 
@@ -279,6 +281,7 @@ class MarketCategory(BaseModel):
     description: Optional[str] = Field(None, description="分类描述")
     enabled: bool = Field(default=True, description="是否启用")
     sort_order: int = Field(default=1, description="排序顺序")
+    user_id: Optional[str] = Field(None, description="所属用户ID，None表示系统全局分类")
     created_at: Optional[datetime] = Field(default_factory=now_tz, description="创建时间")
     updated_at: Optional[datetime] = Field(default_factory=now_tz, description="更新时间")
 
@@ -289,6 +292,7 @@ class DataSourceGrouping(BaseModel):
     market_category_id: str = Field(..., description="市场分类ID")
     priority: int = Field(default=0, description="在该分类中的优先级")
     enabled: bool = Field(default=True, description="是否启用")
+    user_id: Optional[str] = Field(None, description="所属用户ID，None表示系统全局分组")
     created_at: Optional[datetime] = Field(default_factory=now_tz, description="创建时间")
     updated_at: Optional[datetime] = Field(default_factory=now_tz, description="更新时间")
 
@@ -325,7 +329,8 @@ class SystemConfig(BaseModel):
     id: Optional[PyObjectId] = Field(default_factory=PyObjectId, alias="_id")
     config_name: str = Field(..., description="配置名称")
     config_type: str = Field(..., description="配置类型")
-    
+    user_id: Optional[str] = Field(None, description="所属用户ID，None表示系统全局配置，所有用户共享")
+
     # 大模型配置
     llm_configs: List[LLMConfig] = Field(default_factory=list, description="大模型配置列表")
     default_llm: Optional[str] = Field(None, description="默认大模型")

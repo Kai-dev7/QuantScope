@@ -939,7 +939,7 @@ class AnalysisService:
         except Exception as e:
             logger.error(f"更新任务状态失败: {task_id} - {e}")
 
-    async def get_task_status(self, task_id: str) -> Optional[Dict[str, Any]]:
+    async def get_task_status(self, task_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """获取任务状态"""
         try:
             # 先检查内存中的进度跟踪器
@@ -949,7 +949,11 @@ class AnalysisService:
 
                 # 从数据库获取任务基本信息
                 db = get_mongo_db()
-                task = await db.analysis_tasks.find_one({"task_id": task_id})
+                if user_id:
+                    query = {"task_id": task_id, "$or": [{"user_id": user_id}, {"user": user_id}]}
+                else:
+                    query = {"task_id": task_id}
+                task = await db.analysis_tasks.find_one(query)
 
                 if task:
                     # 合并数据库信息和进度跟踪器信息
@@ -986,7 +990,11 @@ class AnalysisService:
 
             # 从数据库获取
             db = get_mongo_db()
-            task = await db.analysis_tasks.find_one({"task_id": task_id})
+            if user_id:
+                query = {"task_id": task_id, "$or": [{"user_id": user_id}, {"user": user_id}]}
+            else:
+                query = {"task_id": task_id}
+            task = await db.analysis_tasks.find_one(query)
 
             if task:
                 # 计算已用时间

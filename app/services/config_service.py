@@ -41,13 +41,21 @@ class ConfigService:
 
     # ==================== 市场分类管理 ====================
 
-    async def get_market_categories(self) -> List[MarketCategory]:
-        """获取所有市场分类"""
+    async def get_market_categories(self, user_id: Optional[str] = None) -> List[MarketCategory]:
+        """获取市场分类（支持多账号隔离）
+        
+        多用户模式：返回全局分类（user_id=None）和用户专属分类
+        """
         try:
             db = await self._get_db()
             categories_collection = db.market_categories
 
-            categories_data = await categories_collection.find({}).to_list(length=None)
+            # 多用户隔离：优先获取用户专属分类，同时包含全局分类
+            if user_id:
+                query = {"$or": [{"user_id": user_id}, {"user_id": None}]}
+            else:
+                query = {"user_id": None}
+            categories_data = await categories_collection.find(query).to_list(length=None)
             categories = [MarketCategory(**data) for data in categories_data]
 
             # 如果没有分类，创建默认分类
@@ -115,32 +123,35 @@ class ConfigService:
 
         return default_categories
 
-    async def add_market_category(self, category: MarketCategory) -> bool:
-        """添加市场分类"""
+    async def add_market_category(self, category: MarketCategory, user_id: Optional[str] = None) -> bool:
+        """添加市场分类（支持多账号隔离）"""
         try:
             db = await self._get_db()
             categories_collection = db.market_categories
 
-            # 检查ID是否已存在
-            existing = await categories_collection.find_one({"id": category.id})
+            # 多用户：按 user_id 检查ID是否存在
+            existing = await categories_collection.find_one({"id": category.id, "user_id": user_id})
             if existing:
                 return False
 
-            await categories_collection.insert_one(category.model_dump())
+            # 保存时设置 user_id
+            doc = category.model_dump()
+            doc["user_id"] = user_id
+            await categories_collection.insert_one(doc)
             return True
         except Exception as e:
             print(f"❌ 添加市场分类失败: {e}")
             return False
 
-    async def update_market_category(self, category_id: str, updates: Dict[str, Any]) -> bool:
-        """更新市场分类"""
+    async def update_market_category(self, category_id: str, updates: Dict[str, Any], user_id: Optional[str] = None) -> bool:
+        """更新市场分类（支持多账号隔离）"""
         try:
             db = await self._get_db()
             categories_collection = db.market_categories
 
             updates["updated_at"] = now_tz()
             result = await categories_collection.update_one(
-                {"id": category_id},
+                {"id": category_id, "user_id": user_id},
                 {"$set": updates}
             )
             return result.modified_count > 0
@@ -148,21 +159,22 @@ class ConfigService:
             print(f"❌ 更新市场分类失败: {e}")
             return False
 
-    async def delete_market_category(self, category_id: str) -> bool:
-        """删除市场分类"""
+    async def delete_market_category(self, category_id: str, user_id: Optional[str] = None) -> bool:
+        """删除市场分类（支持多账号隔离）"""
         try:
             db = await self._get_db()
             categories_collection = db.market_categories
             groupings_collection = db.datasource_groupings
 
+            # 多用户：只删除当前用户的分类
             # 检查是否有数据源使用此分类
             groupings_count = await groupings_collection.count_documents(
-                {"market_category_id": category_id}
+                {"market_category_id": category_id, "user_id": user_id}
             )
             if groupings_count > 0:
                 return False
 
-            result = await categories_collection.delete_one({"id": category_id})
+            result = await categories_collection.delete_one({"id": category_id, "user_id": user_id})
             return result.deleted_count > 0
         except Exception as e:
             print(f"❌ 删除市场分类失败: {e}")
@@ -170,55 +182,69 @@ class ConfigService:
 
     # ==================== 数据源分组管理 ====================
 
-    async def get_datasource_groupings(self) -> List[DataSourceGrouping]:
-        """获取所有数据源分组关系"""
+    async def get_datasource_groupings(self, user_id: Optional[str] = None) -> List[DataSourceGrouping]:
+        """获取数据源分组关系（支持多账号隔离）
+        
+        多用户模式：返回全局分组（user_id=None）和用户专属分组
+        """
         try:
             db = await self._get_db()
             groupings_collection = db.datasource_groupings
 
-            groupings_data = await groupings_collection.find({}).to_list(length=None)
+            # 多用户隔离：优先获取用户专属分组，同时包含全局分组
+            if user_id:
+                query = {"$or": [{"user_id": user_id}, {"user_id": None}]}
+            else:
+                query = {"user_id": None}
+            groupings_data = await groupings_collection.find(query).to_list(length=None)
             return [DataSourceGrouping(**data) for data in groupings_data]
         except Exception as e:
             print(f"❌ 获取数据源分组关系失败: {e}")
             return []
 
-    async def add_datasource_to_category(self, grouping: DataSourceGrouping) -> bool:
-        """将数据源添加到分类"""
+    async def add_datasource_to_category(self, grouping: DataSourceGrouping, user_id: Optional[str] = None) -> bool:
+        """将数据源添加到分类（支持多账号隔离）"""
         try:
             db = await self._get_db()
             groupings_collection = db.datasource_groupings
 
-            # 检查是否已存在
+            # 多用户：按 user_id 检查是否已存在
             existing = await groupings_collection.find_one({
                 "data_source_name": grouping.data_source_name,
-                "market_category_id": grouping.market_category_id
+                "market_category_id": grouping.market_category_id,
+                "user_id": user_id
             })
             if existing:
                 return False
 
-            await groupings_collection.insert_one(grouping.model_dump())
+            # 保存时设置 user_id
+            doc = grouping.model_dump()
+            doc["user_id"] = user_id
+            await groupings_collection.insert_one(doc)
             return True
         except Exception as e:
             print(f"❌ 添加数据源到分类失败: {e}")
             return False
 
-    async def remove_datasource_from_category(self, data_source_name: str, category_id: str) -> bool:
-        """从分类中移除数据源"""
+    async def remove_datasource_from_category(self, data_source_name: str, category_id: str, user_id: Optional[str] = None) -> bool:
+        """从分类中移除数据源（支持多账号隔离）"""
         try:
             db = await self._get_db()
             groupings_collection = db.datasource_groupings
 
+            # 多用户隔离
             result = await groupings_collection.delete_one({
                 "data_source_name": data_source_name,
-                "market_category_id": category_id
+                "market_category_id": category_id,
+                "user_id": user_id
             })
             return result.deleted_count > 0
         except Exception as e:
             print(f"❌ 从分类中移除数据源失败: {e}")
             return False
 
-    async def update_datasource_grouping(self, data_source_name: str, category_id: str, updates: Dict[str, Any]) -> bool:
-        """更新数据源分组关系
+    async def update_datasource_grouping(self, data_source_name: str, category_id: str, updates: Dict[str, Any], user_id: Optional[str] = None) -> bool:
+        """更新数据源分组关系（支持多账号隔离）
 
         🔥 重要：同时更新 datasource_groupings 和 system_configs 两个集合
         - datasource_groupings: 用于前端展示和管理
@@ -229,21 +255,22 @@ class ConfigService:
             groupings_collection = db.datasource_groupings
             config_collection = db.system_configs
 
-            # 1. 更新 datasource_groupings 集合
+            # 1. 更新 datasource_groupings 集合（多用户隔离）
             updates["updated_at"] = now_tz()
             result = await groupings_collection.update_one(
                 {
                     "data_source_name": data_source_name,
-                    "market_category_id": category_id
+                    "market_category_id": category_id,
+                    "user_id": user_id
                 },
                 {"$set": updates}
             )
 
-            # 2. 🔥 如果更新了优先级，同步更新 system_configs 集合
+            # 2. 🔥 如果更新了优先级，同步更新 system_configs 集合（多用户隔离）
             if "priority" in updates and result.modified_count > 0:
-                # 获取当前激活的配置
+                # 获取当前用户激活的配置
                 config_data = await config_collection.find_one(
-                    {"is_active": True},
+                    {"is_active": True, "user_id": user_id},
                     sort=[("version", -1)]
                 )
 
@@ -359,25 +386,49 @@ class ConfigService:
             traceback.print_exc()
             return False
 
-    async def get_system_config(self) -> Optional[SystemConfig]:
-        """获取系统配置 - 优先从数据库获取最新数据"""
+    async def get_system_config(self, user_id: Optional[str] = None) -> Optional[SystemConfig]:
+        """获取系统配置 - 优先从数据库获取最新数据
+
+        Args:
+            user_id: 用户ID，None表示获取全局配置（非多用户场景）
+            多用户场景下：先查用户专属配置(user_id=X)，没有则查全局配置(user_id=None)作为兜底
+        """
         try:
-            # 直接从数据库获取最新配置，避免缓存问题
             db = await self._get_db()
             config_collection = db.system_configs
 
-            config_data = await config_collection.find_one(
-                {"is_active": True},
-                sort=[("version", -1)]
-            )
-
-            if config_data:
-                print(f"📊 从数据库获取配置，版本: {config_data.get('version', 0)}, LLM配置数量: {len(config_data.get('llm_configs', []))}")
-                return SystemConfig(**config_data)
-
-            # 如果没有配置，创建默认配置
-            print("⚠️ 数据库中没有配置，创建默认配置")
-            return await self._create_default_config()
+            if user_id:
+                # 多用户模式：优先查用户专属配置，没有则查全局配置兜底
+                config_data = await config_collection.find_one(
+                    {"is_active": True, "user_id": user_id},
+                    sort=[("version", -1)]
+                )
+                if config_data:
+                    print(f"📊 从数据库获取用户[{user_id}]专属配置，版本: {config_data.get('version', 0)}")
+                    return SystemConfig(**config_data)
+                # 用户无专属配置，回退到全局配置
+                config_data = await config_collection.find_one(
+                    {"is_active": True, "user_id": None},
+                    sort=[("version", -1)]
+                )
+                if config_data:
+                    print(f"📊 用户[{user_id}]无专属配置，使用全局配置，版本: {config_data.get('version', 0)}")
+                    return SystemConfig(**config_data)
+                # 没有任何配置，创建用户专属默认配置
+                print(f"⚠️ 数据库中没有用户[{user_id}]和全局配置，创建默认配置")
+                return await self._create_default_config(user_id=user_id)
+            else:
+                # 非多用户模式：查全局配置
+                config_data = await config_collection.find_one(
+                    {"is_active": True, "user_id": None},
+                    sort=[("version", -1)]
+                )
+                if config_data:
+                    print(f"📊 从数据库获取全局配置，版本: {config_data.get('version', 0)}, LLM配置数量: {len(config_data.get('llm_configs', []))}")
+                    return SystemConfig(**config_data)
+                # 如果没有配置，创建默认配置（非多用户）
+                print("⚠️ 数据库中没有全局配置，创建默认配置")
+                return await self._create_default_config()
 
         except Exception as e:
             print(f"❌ 从数据库获取配置失败: {e}")
@@ -393,11 +444,17 @@ class ConfigService:
 
             return None
     
-    async def _create_default_config(self) -> SystemConfig:
-        """创建默认系统配置"""
+    async def _create_default_config(self, user_id: Optional[str] = None) -> SystemConfig:
+        """创建默认系统配置
+
+        Args:
+            user_id: 用户ID，None表示全局配置
+        """
+        config_name = f"用户配置" if user_id else "全局默认配置"
         default_config = SystemConfig(
-            config_name="默认配置",
+            config_name=config_name,
             config_type="system",
+            user_id=user_id,
             llm_configs=[
                 LLMConfig(
                     provider=ModelProvider.OPENAI,
@@ -526,12 +583,13 @@ class ConfigService:
             config.updated_at = now_tz()
             config.version += 1
 
-            # 将当前激活的配置设为非激活
+            # 将当前同用户的激活配置设为非激活（用户隔离：只操作同一 user_id 的配置）
+            deactivate_filter = {"is_active": True, "user_id": config.user_id}
             update_result = await config_collection.update_many(
-                {"is_active": True},
+                deactivate_filter,
                 {"$set": {"is_active": False}}
             )
-            print(f"📝 禁用旧配置数量: {update_result.modified_count}")
+            print(f"📝 禁用旧配置数量: {update_result.modified_count} (user_id={config.user_id})")
 
             # 插入新配置 - 移除_id字段让MongoDB自动生成新的
             config_dict = config.model_dump(by_alias=True)
@@ -572,12 +630,12 @@ class ConfigService:
             traceback.print_exc()
             return False
 
-    async def delete_llm_config(self, provider: str, model_name: str) -> bool:
-        """删除大模型配置"""
+    async def delete_llm_config(self, provider: str, model_name: str, user_id: Optional[str] = None) -> bool:
+        """删除大模型配置（支持多账号隔离）"""
         try:
-            print(f"🗑️ 删除大模型配置 - provider: {provider}, model_name: {model_name}")
+            print(f"🗑️ 删除大模型配置 - provider: {provider}, model_name: {model_name}, user_id: {user_id}")
 
-            config = await self.get_system_config()
+            config = await self.get_system_config(user_id=user_id)
             if not config:
                 print("❌ 系统配置为空")
                 return False
@@ -605,7 +663,7 @@ class ConfigService:
                 return False  # 没有找到要删除的配置
 
             # 保存更新后的配置
-            save_result = await self.save_system_config(config)
+            save_result = await self.save_system_config(config, user_id=user_id)
             print(f"💾 保存结果: {save_result}")
 
             return save_result
@@ -616,10 +674,10 @@ class ConfigService:
             traceback.print_exc()
             return False
 
-    async def set_default_llm(self, model_name: str) -> bool:
-        """设置默认大模型"""
+    async def set_default_llm(self, model_name: str, user_id: Optional[str] = None) -> bool:
+        """设置默认大模型（支持多账号隔离）"""
         try:
-            config = await self.get_system_config()
+            config = await self.get_system_config(user_id=user_id)
             if not config:
                 return False
 
@@ -632,13 +690,13 @@ class ConfigService:
                 return False
 
             config.default_llm = model_name
-            return await self.save_system_config(config)
+            return await self.save_system_config(config, user_id=user_id)
 
         except Exception as e:
             print(f"设置默认LLM失败: {e}")
             return False
 
-    async def set_default_data_source(self, data_source_name: str) -> bool:
+    async def set_default_data_source(self, data_source_name: str, user_id: Optional[str] = None) -> bool:
         """设置默认数据源"""
         try:
             config = await self.get_system_config()
@@ -660,10 +718,10 @@ class ConfigService:
             print(f"设置默认数据源失败: {e}")
             return False
 
-    async def update_system_settings(self, settings: Dict[str, Any]) -> bool:
-        """更新系统设置"""
+    async def update_system_settings(self, settings: Dict[str, Any], user_id: Optional[str] = None) -> bool:
+        """更新系统设置（支持多账号隔离）"""
         try:
-            config = await self.get_system_config()
+            config = await self.get_system_config(user_id=user_id)
             if not config:
                 return False
 
@@ -688,7 +746,7 @@ class ConfigService:
             else:
                 print(f"  ⚠️  更新后不包含 deep_analysis_model")
 
-            result = await self.save_system_config(config)
+            result = await self.save_system_config(config, user_id=user_id)
 
             # 同步到文件系统（供 unified_config 使用）
             if result:
@@ -705,10 +763,10 @@ class ConfigService:
             print(f"更新系统设置失败: {e}")
             return False
 
-    async def get_system_settings(self) -> Dict[str, Any]:
-        """获取系统设置"""
+    async def get_system_settings(self, user_id: Optional[str] = None) -> Dict[str, Any]:
+        """获取系统设置（支持多账号隔离）"""
         try:
-            config = await self.get_system_config()
+            config = await self.get_system_config(user_id=user_id)
             if not config:
                 return {}
             return config.system_settings
@@ -716,10 +774,10 @@ class ConfigService:
             print(f"获取系统设置失败: {e}")
             return {}
 
-    async def export_config(self) -> Dict[str, Any]:
-        """导出配置"""
+    async def export_config(self, user_id: Optional[str] = None) -> Dict[str, Any]:
+        """导出配置（支持多账号隔离）"""
         try:
-            config = await self.get_system_config()
+            config = await self.get_system_config(user_id=user_id)
             if not config:
                 return {}
 
@@ -848,18 +906,23 @@ class ConfigService:
             print(f"迁移传统配置失败: {e}")
             return False
     
-    async def update_llm_config(self, llm_config: LLMConfig) -> bool:
-        """更新大模型配置"""
+    async def update_llm_config(self, llm_config: LLMConfig, user_id: Optional[str] = None) -> bool:
+        """更新大模型配置（支持多账号隔离）"""
         try:
-            # 直接保存到统一配置管理器
-            success = unified_config.save_llm_config(llm_config)
-            if not success:
-                return False
-
-            # 同时更新数据库配置
-            config = await self.get_system_config()
+            # 多用户：直接操作数据库，不走 unified_config（那是全局的）
+            config = await self.get_system_config(user_id=user_id)
             if not config:
                 return False
+
+            # 如果 config 没有 user_id（全局配置），需要给用户创建专属副本
+            if config.user_id is None and user_id is not None:
+                # 全局配置不能直接修改，创建用户专属副本
+                config.user_id = user_id
+                config.id = None  # 让 MongoDB 生成新 _id
+                config.is_active = True
+                config.version = 1
+                config.created_at = now_tz()
+                config.updated_at = now_tz()
 
             # 查找并更新对应的LLM配置
             for i, existing_config in enumerate(config.llm_configs):
@@ -2139,12 +2202,12 @@ class ConfigService:
 
     # ========== 数据库配置管理 ==========
 
-    async def add_database_config(self, db_config: DatabaseConfig) -> bool:
-        """添加数据库配置"""
+    async def add_database_config(self, db_config: DatabaseConfig, user_id: Optional[str] = None) -> bool:
+        """添加数据库配置（支持多账号隔离）"""
         try:
-            logger.info(f"➕ 添加数据库配置: {db_config.name}")
+            logger.info(f"➕ 添加数据库配置: {db_config.name}, user_id: {user_id}")
 
-            config = await self.get_system_config()
+            config = await self.get_system_config(user_id=user_id)
             if not config:
                 logger.error("❌ 系统配置为空")
                 return False
@@ -2159,7 +2222,7 @@ class ConfigService:
             config.database_configs.append(db_config)
 
             # 保存配置
-            result = await self.save_system_config(config)
+            result = await self.save_system_config(config, user_id=user_id)
             if result:
                 logger.info(f"✅ 数据库配置 '{db_config.name}' 添加成功")
             else:
@@ -2173,12 +2236,12 @@ class ConfigService:
             traceback.print_exc()
             return False
 
-    async def update_database_config(self, db_config: DatabaseConfig) -> bool:
-        """更新数据库配置"""
+    async def update_database_config(self, db_config: DatabaseConfig, user_id: Optional[str] = None) -> bool:
+        """更新数据库配置（支持多账号隔离）"""
         try:
-            logger.info(f"🔄 更新数据库配置: {db_config.name}")
+            logger.info(f"🔄 更新数据库配置: {db_config.name}, user_id: {user_id}")
 
-            config = await self.get_system_config()
+            config = await self.get_system_config(user_id=user_id)
             if not config:
                 logger.error("❌ 系统配置为空")
                 return False
@@ -2196,7 +2259,7 @@ class ConfigService:
                 return False
 
             # 保存配置
-            result = await self.save_system_config(config)
+            result = await self.save_system_config(config, user_id=user_id)
             if result:
                 logger.info(f"✅ 数据库配置 '{db_config.name}' 更新成功")
             else:
@@ -2210,12 +2273,12 @@ class ConfigService:
             traceback.print_exc()
             return False
 
-    async def delete_database_config(self, db_name: str) -> bool:
-        """删除数据库配置"""
+    async def delete_database_config(self, db_name: str, user_id: Optional[str] = None) -> bool:
+        """删除数据库配置（支持多账号隔离）"""
         try:
-            logger.info(f"🗑️ 删除数据库配置: {db_name}")
+            logger.info(f"🗑️ 删除数据库配置: {db_name}, user_id: {user_id}")
 
-            config = await self.get_system_config()
+            config = await self.get_system_config(user_id=user_id)
             if not config:
                 logger.error("❌ 系统配置为空")
                 return False
@@ -2236,7 +2299,7 @@ class ConfigService:
                 return False
 
             # 保存配置
-            result = await self.save_system_config(config)
+            result = await self.save_system_config(config, user_id=user_id)
             if result:
                 logger.info(f"✅ 数据库配置 '{db_name}' 删除成功")
             else:
@@ -2250,10 +2313,10 @@ class ConfigService:
             traceback.print_exc()
             return False
 
-    async def get_database_config(self, db_name: str) -> Optional[DatabaseConfig]:
-        """获取指定的数据库配置"""
+    async def get_database_config(self, db_name: str, user_id: Optional[str] = None) -> Optional[DatabaseConfig]:
+        """获取指定的数据库配置（支持多账号隔离）"""
         try:
-            config = await self.get_system_config()
+            config = await self.get_system_config(user_id=user_id)
             if not config:
                 return None
 
@@ -2267,10 +2330,10 @@ class ConfigService:
             logger.error(f"❌ 获取数据库配置失败: {e}")
             return None
 
-    async def get_database_configs(self) -> List[DatabaseConfig]:
-        """获取所有数据库配置"""
+    async def get_database_configs(self, user_id: Optional[str] = None) -> List[DatabaseConfig]:
+        """获取所有数据库配置（支持多账号隔离）"""
         try:
-            config = await self.get_system_config()
+            config = await self.get_system_config(user_id=user_id)
             if not config:
                 return []
 
@@ -2702,10 +2765,10 @@ class ConfigService:
             return self._get_default_model_catalog()
 
 
-    async def set_default_llm(self, model_name: str) -> bool:
-        """设置默认大模型"""
+    async def set_default_llm(self, model_name: str, user_id: Optional[str] = None) -> bool:
+        """设置默认大模型（支持多账号隔离）"""
         try:
-            config = await self.get_system_config()
+            config = await self.get_system_config(user_id=user_id)
             if not config:
                 return False
 
@@ -2719,15 +2782,15 @@ class ConfigService:
                 return False
 
             config.default_llm = model_name
-            return await self.save_system_config(config)
+            return await self.save_system_config(config, user_id=user_id)
         except Exception as e:
             print(f"设置默认LLM失败: {e}")
             return False
 
-    async def set_default_data_source(self, source_name: str) -> bool:
-        """设置默认数据源"""
+    async def set_default_data_source(self, source_name: str, user_id: Optional[str] = None) -> bool:
+        """设置默认数据源（支持多账号隔离）"""
         try:
-            config = await self.get_system_config()
+            config = await self.get_system_config(user_id=user_id)
             if not config:
                 return False
 
@@ -2748,18 +2811,42 @@ class ConfigService:
 
     # ========== 大模型厂家管理 ==========
 
-    async def get_llm_providers(self) -> List[LLMProvider]:
-        """获取所有大模型厂家（合并环境变量配置）"""
+    async def get_llm_providers(self, user_id: Optional[str] = None) -> List[LLMProvider]:
+        """获取所有大模型厂家（合并环境变量配置）
+
+        Args:
+            user_id: 用户ID，None表示只获取全局厂家
+            多用户模式：返回用户专属厂家 + 全局厂家（全局厂家作为兜底）
+        """
         try:
             db = await self._get_db()
             providers_collection = db.llm_providers
 
-            providers_data = await providers_collection.find().to_list(length=None)
+            # 多用户模式：查用户专属 + 全局厂家，全局兜底
+            if user_id:
+                query = {"$or": [{"user_id": user_id}, {"user_id": None}]}
+            else:
+                query = {"user_id": None}
+            providers_data = await providers_collection.find(query).to_list(length=None)
+
+            logger.info(f"🔍 [get_llm_providers] 从数据库获取到 {len(providers_data)} 个供应商 (user_id={user_id})")
+
+            # 按 user_id 分离：user_id 优先于 None（全局）
+            global_providers = {}
+            user_providers = {}
+            for p in providers_data:
+                uid = p.get("user_id")
+                name = p.get("name")
+                if uid == user_id:
+                    user_providers[name] = p
+                else:
+                    global_providers[name] = p
+
+            # 用户专属覆盖全局（同一 name 保留用户版）
+            merged_data = {**global_providers, **user_providers}
             providers = []
 
-            logger.info(f"🔍 [get_llm_providers] 从数据库获取到 {len(providers_data)} 个供应商")
-
-            for provider_data in providers_data:
+            for provider_data in merged_data.values():
                 provider = LLMProvider(**provider_data)
 
                 # 🔥 判断数据库中的 API Key 是否有效

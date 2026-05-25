@@ -889,6 +889,8 @@ class TradingAgentsGraph:
         task_id=None,
         planner_plan=None,
         focus_hint=None,
+        resume_state=None,
+        resume_from_node=None,
     ):
         """Run the trading agents graph for a company on a specific date.
 
@@ -905,6 +907,8 @@ class TradingAgentsGraph:
             task_id=task_id,
             planner_plan=planner_plan,
             focus_hint=focus_hint,
+            resume_state=resume_state,
+            resume_from_node=resume_from_node,
         )
 
     def _propagate_agentscope(
@@ -915,6 +919,8 @@ class TradingAgentsGraph:
         task_id=None,
         planner_plan=None,
         focus_hint=None,
+        resume_state=None,
+        resume_from_node=None,
     ):
         """Run the trading agents flow using AgentScope."""
         logger.debug(f"🔍 [AGENTSCOPE] ===== TradingAgentsGraph._propagate_agentscope 接收参数 =====")
@@ -924,15 +930,26 @@ class TradingAgentsGraph:
 
         self.ticker = company_name
 
-        init_agent_state = self.propagator.create_initial_state(
-            company_name,
-            trade_date,
-            session_id=task_id,
-            planner_plan=planner_plan,
-            focus_hint=focus_hint,
-            skill_name=self.config.get("skill_name"),
-            skill_tool_policy=self.config.get("skill_tool_policy"),
-        )
+        if resume_state:
+            init_agent_state = dict(resume_state)
+            init_agent_state["session_id"] = task_id or init_agent_state.get("session_id", "")
+            init_agent_state["company_of_interest"] = company_name
+            init_agent_state["trade_date"] = str(trade_date)
+            init_agent_state["planner_plan"] = planner_plan or init_agent_state.get("planner_plan", {})
+            init_agent_state["focus_hint"] = focus_hint or init_agent_state.get("focus_hint", "")
+            init_agent_state["skill_name"] = self.config.get("skill_name") or init_agent_state.get("skill_name", "")
+            init_agent_state["skill_tool_policy"] = self.config.get("skill_tool_policy") or init_agent_state.get("skill_tool_policy", {})
+            logger.info(f"🔁 [AGENTSCOPE] 从 checkpoint 恢复执行，resume_from_node={resume_from_node}")
+        else:
+            init_agent_state = self.propagator.create_initial_state(
+                company_name,
+                trade_date,
+                session_id=task_id,
+                planner_plan=planner_plan,
+                focus_hint=focus_hint,
+                skill_name=self.config.get("skill_name"),
+                skill_tool_policy=self.config.get("skill_tool_policy"),
+            )
 
         node_timings = {}
         total_start_time = time.time()
@@ -951,6 +968,7 @@ class TradingAgentsGraph:
             init_agent_state,
             selected_analysts=self.selected_analysts,
             progress_sender=progress_sender,
+            resume_from_node=resume_from_node,
         )
 
         total_elapsed = time.time() - total_start_time

@@ -1,0 +1,29 @@
+# Backend Dev Dockerfile — 挂载本地代码热更新，不需要每次 build
+FROM python:3.10-slim-bookworm
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    TZ=Asia/Shanghai
+
+WORKDIR /app
+
+# 系统依赖（中文字体 + PDF 工具）
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        curl fontconfig xvfb && \
+    for attempt in 1 2 3; do \
+        apt-get install -y --no-install-recommends fonts-noto-cjk && break || \
+        { [ "${attempt}" = "3" ] && apt-get install -y --no-install-recommends fonts-wqy-zenhei; true; }; \
+    done && \
+    apt-get install -y --no-install-recommends wkhtmltopdf && \
+    fc-cache -fv && \
+    rm -rf /var/lib/apt/lists/*
+
+# Python 依赖（只装一次，之后代码通过 volume 挂载）
+COPY pyproject.toml ./
+RUN pip install --upgrade pip -i https://pypi.tuna.tsinghua.edu.cn/simple && \
+    pip install --prefer-binary . -i https://pypi.tuna.tsinghua.edu.cn/simple && \
+    pip install --prefer-binary pdfkit -i https://pypi.tuna.tsinghua.edu.cn/simple
+
+EXPOSE 8000

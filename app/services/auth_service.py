@@ -3,6 +3,7 @@ import secrets
 import hashlib
 import smtplib
 import os
+import socket
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from app.utils.timezone import now_tz
@@ -137,36 +138,60 @@ class AuthService:
                 return code  # 开发环境返回dev_code
             return None
 
-        try:
-            smtp_port = int(os.getenv("MAIL_PORT", "587"))
-            smtp_user = os.getenv("MAIL_USER", "").strip()
-            smtp_password = os.getenv("MAIL_PASS", "").strip()
-            smtp_from = os.getenv("MAIL_FROM", smtp_user or "noreply@example.com").strip()
-            smtp_starttls = os.getenv("MAIL_STARTTLS", "1").strip().lower() not in ("0", "false", "off", "no")
-            smtp_ssl = os.getenv("MAIL_SSL", "0").strip().lower() in ("1", "true", "on", "yes")
+        smtp_port = int(os.getenv("MAIL_PORT", "587"))
+        smtp_user = os.getenv("MAIL_USER", "").strip()
+        smtp_password = os.getenv("MAIL_PASS", "").strip()
+        smtp_from = os.getenv("MAIL_FROM", smtp_user or "noreply@example.com").strip()
+        smtp_starttls = os.getenv("MAIL_STARTTLS", "1").strip().lower() not in ("0", "false", "off", "no")
+        smtp_ssl = os.getenv("MAIL_SSL", "0").strip().lower() in ("1", "true", "on", "yes")
+        smtp_timeout = int(os.getenv("MAIL_TIMEOUT", "20"))
+        smtp_retries = max(1, int(os.getenv("MAIL_RETRIES", "3")))
+        smtp_retry_delay = float(os.getenv("MAIL_RETRY_DELAY", "1"))
 
-            msg = EmailMessage()
-            msg["Subject"] = "QuantScope 登录验证码"
-            msg["From"] = smtp_from
-            msg["To"] = email
-            msg.set_content(f"你的 QuantScope 登录验证码是：{code}\n\n5 分钟内有效。")
+        host_candidates = [smtp_host]
+        extra_hosts = os.getenv("MAIL_HOSTS", "").strip()
+        if extra_hosts:
+            host_candidates.extend(h.strip() for h in extra_hosts.split(",") if h.strip())
+        host_candidates = list(dict.fromkeys(host_candidates))
 
-            smtp_cls = smtplib.SMTP_SSL if smtp_ssl else smtplib.SMTP
-            with smtp_cls(smtp_host, smtp_port, timeout=20) as server:
-                if smtp_starttls and not smtp_ssl:
-                    server.starttls()
-                if smtp_user:
-                    server.login(smtp_user, smtp_password)
-                server.send_message(msg)
+        msg = EmailMessage()
+        msg["Subject"] = "QuantScope 登录验证码"
+        msg["From"] = smtp_from
+        msg["To"] = email
+        msg.set_content(f"你的 QuantScope 登录验证码是：{code}\n\n5 分钟内有效。")
 
-            logger.info(f"📧 验证码已发送到 {email}")
-            return None  # 发送成功，不返回dev_code
+        last_error: Optional[Exception] = None
+        for host in host_candidates:
+            for attempt in range(1, smtp_retries + 1):
+                try:
+                    logger.info(f"📧 正在发送验证码邮件: host={host}:{smtp_port}, attempt={attempt}/{smtp_retries}")
+                    socket.getaddrinfo(host, smtp_port)
 
-        except Exception as e:
-            logger.error(f"❌ 发送邮件失败: {e}")
-            if not is_production:
-                return code  # 开发环境返回dev_code
-            return None
+                    smtp_cls = smtplib.SMTP_SSL if smtp_ssl else smtplib.SMTP
+                    with smtp_cls(host, smtp_port, timeout=smtp_timeout) as server:
+                        if smtp_starttls and not smtp_ssl:
+                            server.starttls()
+                        if smtp_user:
+                            server.login(smtp_user, smtp_password)
+                        server.send_message(msg)
+
+                    logger.info(f"📧 验证码已发送到 {email}")
+                    return None  # 发送成功，不返回dev_code
+
+                except socket.gaierror as e:
+                    last_error = e
+                    logger.warning(f"📧 SMTP DNS解析失败: host={host}, attempt={attempt}/{smtp_retries}, error={e}")
+                except Exception as e:
+                    last_error = e
+                    logger.warning(f"📧 SMTP发送失败: host={host}, attempt={attempt}/{smtp_retries}, error={e}")
+
+                if attempt < smtp_retries:
+                    time.sleep(smtp_retry_delay)
+
+        logger.error(f"❌ 发送邮件失败: {last_error}")
+        if not is_production:
+            return code  # 开发环境返回dev_code
+        return None
 
     @staticmethod
     async def verify_and_login(email: str, code: str) -> Optional[dict]:

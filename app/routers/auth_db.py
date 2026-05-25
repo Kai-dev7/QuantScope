@@ -525,8 +525,8 @@ class VerifyCodeRequest(BaseModel):
 class RegisterEmailRequest(BaseModel):
     """邮箱注册请求"""
     email: str
-    username: str
-    password: str
+    username: Optional[str] = None  # 可选，不填则自动生成
+    password: Optional[str] = None  # 可选，不填则自动生成
     code: str  # 注册时也需要验证码验证
 
 
@@ -659,13 +659,19 @@ async def register_with_email(payload: RegisterEmailRequest, request: Request):
         if not re.match(r'^[^@]+@[^@]+\.[^@]+$', payload.email):
             raise HTTPException(status_code=400, detail="邮箱格式不正确")
 
-        # 验证用户名格式
-        if len(payload.username) < 3 or len(payload.username) > 50:
+        # 验证用户名格式（不填则自动从邮箱生成）
+        final_username = payload.username
+        if not final_username:
+            # 从邮箱前缀生成用户名
+            final_username = payload.email.split('@')[0]
+        if len(final_username) < 3 or len(final_username) > 50:
             raise HTTPException(status_code=400, detail="用户名长度为3-50个字符")
 
-        # 验证密码格式
-        if len(payload.password) < 6:
-            raise HTTPException(status_code=400, detail="密码至少6个字符")
+        # 验证密码格式（不填则自动生成）
+        final_password = payload.password
+        if not final_password:
+            import secrets
+            final_password = secrets.token_urlsafe(16)
 
         # 先验证注册验证码
         from app.services.auth_service import AuthService
@@ -678,7 +684,7 @@ async def register_with_email(payload: RegisterEmailRequest, request: Request):
         if not stored_value:
             raise HTTPException(status_code=401, detail="验证码不存在或已过期")
 
-        code_hash, expires_at_str = stored_value.split(":")
+        code_hash, expires_at_str = stored_value.split(":", 1)
         expires_at = datetime.fromisoformat(expires_at_str)
 
         if expires_at < now_tz():
@@ -695,14 +701,14 @@ async def register_with_email(payload: RegisterEmailRequest, request: Request):
         # 注册用户
         result = await AuthService.register_with_email(
             email=payload.email,
-            username=payload.username,
-            password=payload.password
+            username=final_username,
+            password=final_password
         )
 
         if not result:
             await log_operation(
                 user_id="unknown",
-                username=payload.username,
+                username=final_username,
                 action_type=ActionType.USER_REGISTER,
                 action="邮箱注册",
                 details={"reason": "用户名或邮箱已存在", "ip": ip_address},

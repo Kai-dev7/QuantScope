@@ -5,7 +5,7 @@ import { authApi } from '@/services/auth'
 import { toast } from 'sonner'
 import { Zap, Eye, EyeOff, Mail, Lock, User, ArrowLeft, ArrowRight, Shield } from 'lucide-react'
 
-type LoginStep = 'email' | 'code' | 'register'
+type LoginStep = 'email' | 'code' | 'register' | 'password'
 type AuthMode = 'login' | 'register'
 
 export default function Login() {
@@ -24,6 +24,8 @@ export default function Login() {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
+  const [loginUsername, setLoginUsername] = useState('')  // 账号密码登录
+  const [loginPwd, setLoginPwd] = useState('')             // 账号密码登录
 
   // UI状态
   const [showPassword, setShowPassword] = useState(false)
@@ -87,7 +89,7 @@ export default function Login() {
       if (mode === 'login') {
         // 验证登录
         const data = await authApi.verifyCode(email, code)
-        setToken(data.data?.access_token)
+        setToken(data.data?.access_token, data.data?.user)
         toast.success('登录成功')
         navigate('/dashboard')
       } else {
@@ -123,11 +125,33 @@ export default function Login() {
     setLoading(true)
     try {
       const data = await authApi.registerWithEmail(email, username, password, code)
-      setToken(data.data?.access_token)
+      setToken(data.data?.access_token, data.data?.user)
       toast.success('注册成功')
       navigate('/dashboard')
     } catch (error: any) {
       toast.error(error.response?.data?.detail || '注册失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // 账号密码登录
+  const handlePasswordLogin = async (e: React.FormEvent) => {
+    e.preventDefault()
+
+    if (!loginUsername || !loginPwd) {
+      toast.error('请输入用户名和密码')
+      return
+    }
+
+    setLoading(true)
+    try {
+      const data = await authApi.loginWithPassword(loginUsername, loginPwd)
+      setToken(data.data?.access_token, data.data?.user)
+      toast.success('登录成功')
+      navigate('/dashboard')
+    } catch (error: any) {
+      toast.error(error.response?.data?.detail || '登录失败')
     } finally {
       setLoading(false)
     }
@@ -144,6 +168,10 @@ export default function Login() {
       setUsername('')
       setPassword('')
       setConfirmPassword('')
+    } else if (step === 'password') {
+      setStep('email')
+      setLoginUsername('')
+      setLoginPwd('')
     }
   }
 
@@ -157,6 +185,8 @@ export default function Login() {
     setUsername('')
     setPassword('')
     setConfirmPassword('')
+    setLoginUsername('')
+    setLoginPwd('')
   }
 
   return (
@@ -398,6 +428,65 @@ export default function Login() {
             </form>
           )}
 
+          {step === 'password' && (
+            <form onSubmit={handlePasswordLogin} className="space-y-4">
+              <div>
+                <label className="block text-sm text-white/60 mb-2">用户名</label>
+                <div className="relative">
+                  <User className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-white/30" />
+                  <input
+                    type="text"
+                    value={loginUsername}
+                    onChange={(e) => setLoginUsername(e.target.value)}
+                    className="w-full pl-10 pr-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white placeholder-white/30 focus:outline-none focus:border-blue-500/50 focus:bg-white/10 transition-all"
+                    placeholder="请输入用户名"
+                    autoComplete="username"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm text-white/60 mb-2">密码</label>
+                <div className="relative">
+                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-white/30" />
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    value={loginPwd}
+                    onChange={(e) => setLoginPwd(e.target.value)}
+                    className="w-full pl-10 pr-12 py-3 rounded-xl bg-white/5 border border-white/10 text-white placeholder-white/30 focus:outline-none focus:border-blue-500/50 focus:bg-white/10 transition-all"
+                    placeholder="请输入密码"
+                    autoComplete="current-password"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-white/40 hover:text-white"
+                  >
+                    {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={handleBack}
+                  className="flex-1 py-3 rounded-xl bg-white/5 border border-white/10 text-white/70 font-medium hover:bg-white/10 transition-all flex items-center justify-center gap-2"
+                >
+                  <ArrowLeft className="w-5 h-5" />
+                  返回
+                </button>
+                <button
+                  type="submit"
+                  disabled={loading || !loginUsername || !loginPwd}
+                  className="flex-1 py-3 rounded-xl bg-gradient-to-r from-blue-500 to-cyan-500 text-white font-semibold hover:opacity-90 transition-opacity disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {loading ? '登录中...' : '登录'}
+                </button>
+              </div>
+            </form>
+          )}
+
           {/* Footer */}
           <div className="mt-6 pt-6 border-t border-white/10">
             <div className="flex items-center justify-between text-sm">
@@ -410,8 +499,9 @@ export default function Login() {
               {mode === 'login' && (
                 <button
                   onClick={() => {
-                    setMode('login')
-                    setStep('email')
+                    setStep('password')
+                    setLoginUsername('')
+                    setLoginPwd('')
                   }}
                   className="text-white/40 hover:text-white/60 transition-colors"
                 >

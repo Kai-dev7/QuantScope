@@ -1,29 +1,26 @@
-import time
 import asyncio
+import time
 from typing import Any, Callable, Dict, List, Optional
 
 from langchain_core.messages import RemoveMessage, ToolMessage
 
-from tradingagents.agents import (
-    create_bear_researcher,
-    create_bull_researcher,
-    create_fundamentals_analyst,
-    create_market_analyst,
-    create_msg_delete,
-    create_news_analyst,
-    create_neutral_debator,
-    create_risk_manager,
-    create_risky_debator,
-    create_research_manager,
-    create_safe_debator,
-    create_social_media_analyst,
-    create_trader,
-)
 from app.services.capabilities import capability_executor
 from app.services.sessions import session_event_store, session_runtime_service
-from .agentscope_pipeline_adapter import StateFunctionAgent, run_agentscope_fanout
-from .llm_judge import JUDGE_TARGETS, LLMJudge
+from app.services.sessions.agent_state_checkpoint import serialize_checkpoint_state
+from tradingagents.agents import (create_bear_researcher,
+                                  create_bull_researcher,
+                                  create_fundamentals_analyst,
+                                  create_market_analyst, create_msg_delete,
+                                  create_neutral_debator, create_news_analyst,
+                                  create_research_manager, create_risk_manager,
+                                  create_risky_debator, create_safe_debator,
+                                  create_social_media_analyst, create_trader)
 from tradingagents.skills import filter_allowed_tools
+
+from .agentscope_pipeline_adapter import (StateFunctionAgent,
+                                          run_agentscope_fanout)
+from .llm_judge import JUDGE_TARGETS, LLMJudge
+
 try:
     from agentscope.agent import AgentBase  # noqa: F401
 except Exception as exc:  # pragma: no cover - handled at runtime
@@ -377,6 +374,7 @@ class AgentScopeRunner:
                             "messages_count": len(local_state.get("messages", [])),
                             "judge_feedback": dict(local_state.get("judge_feedback", {}) or {}),
                             "judge_scores": dict(local_state.get("judge_scores", {}) or {}),
+                            "state": serialize_checkpoint_state(local_state),
                         },
                         checkpoint_id=f"{node_name.lower().replace(' ', '_')}_{int(time.time() * 1000)}",
                         created_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
@@ -400,18 +398,28 @@ class AgentScopeRunner:
             local_state = _StateReducer.apply(local_state, update)
             local_timings[node_name] = time.time() - start
 
+        # AgentScope native: 显式有界 ReAct 循环，替代 while True + conditional_logic 动态路由
+        tool_node_name = f"tools_{analyst_key}"
+        clear_node_name = f"Msg Clear {analyst_key.capitalize()}"
+        default_max = 1 if analyst_key == "fundamentals" else 3
+        max_tool_calls = self.conditional_logic._get_skill_max_tool_calls(
+            local_state, analyst_key, default_max
+        )
+        report_key = ANALYST_REPORT_KEYS[analyst_key]
+
         run_agent(analyst_name, analyst_node)
-        while True:
-            next_step = getattr(
-                self.conditional_logic, f"should_continue_{analyst_key}"
-            )(local_state)
-            if next_step.startswith("tools_"):
-                run_tool_node(next_step, self.tool_map.get(analyst_key, []))
-                run_agent(analyst_name, analyst_node)
-                continue
-            if next_step.startswith("Msg Clear"):
-                run_msg_clear(next_step)
-            break
+        for _ in range(max_tool_calls):
+            messages = local_state.get("messages", [])
+            last_msg = messages[-1] if messages else None
+            report = local_state.get(report_key, "")
+            if report and len(report) > 100:
+                break
+            if not (last_msg and getattr(last_msg, "tool_calls", None)):
+                break
+            run_tool_node(tool_node_name, self.tool_map.get(analyst_key, []))
+            run_agent(analyst_name, analyst_node)
+
+        run_msg_clear(clear_node_name)
 
         return local_state, local_timings
 
@@ -452,12 +460,25 @@ class AgentScopeRunner:
         init_state: Dict[str, Any],
         selected_analysts: List[str],
         progress_sender: Optional[Callable[[str], None]] = None,
+        resume_from_node: Optional[str] = None,
     ) -> tuple[Dict[str, Any], Dict[str, float]]:
         state = init_state
         node_timings: Dict[str, float] = {}
+        resume_reached = not bool(resume_from_node)
+
+        def should_run_node(node_name: str) -> bool:
+            nonlocal resume_reached
+            if resume_reached:
+                return True
+            if node_name == resume_from_node:
+                resume_reached = True
+                return True
+            return False
 
         def run_agent(node_name: str, node_func, send_progress: bool = True):
             nonlocal state
+            if not should_run_node(node_name):
+                return
             if send_progress and progress_sender:
                 progress_sender(node_name)
             start = time.time()
@@ -536,6 +557,7 @@ class AgentScopeRunner:
                             "messages_count": len(state.get("messages", [])),
                             "judge_feedback": dict(state.get("judge_feedback", {}) or {}),
                             "judge_scores": dict(state.get("judge_scores", {}) or {}),
+                            "state": serialize_checkpoint_state(state),
                         },
                         checkpoint_id=f"{node_name.lower().replace(' ', '_')}_{int(time.time() * 1000)}",
                         created_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
@@ -545,6 +567,8 @@ class AgentScopeRunner:
 
         def run_tool_node(node_name: str, tools: List[Any]):
             nonlocal state
+            if not resume_reached:
+                return
             start = time.time()
             update = self._execute_tool_calls(state, tools)
             state = _StateReducer.apply(state, update)
@@ -552,6 +576,8 @@ class AgentScopeRunner:
 
         def run_msg_clear(node_name: str):
             nonlocal state
+            if not resume_reached:
+                return
             start = time.time()
             update = self.delete_node(state)
             state = _StateReducer.apply(state, update)
@@ -560,119 +586,132 @@ class AgentScopeRunner:
         parallel_analysts = [key for key in selected_analysts if key in {"market", "social", "news", "fundamentals"}]
         sequential_analysts = [key for key in selected_analysts if key not in {"market", "social", "news", "fundamentals"}]
 
-        if self.parallel_analyst_pipeline_enabled and len(parallel_analysts) > 1:
-            analyst_states: Dict[str, Dict[str, Any]] = {}
-            agents = [
-                StateFunctionAgent(
-                    name=analyst_key,
-                    handler=lambda local_state, key=analyst_key: self._run_single_analyst(key, local_state),
-                )
-                for analyst_key in parallel_analysts[: self.parallel_analyst_max_workers]
-            ]
-            asyncio.run(
-                run_agentscope_fanout(
-                    name="analyst-stage",
-                    agents=agents,
-                    state=state,
-                )
+        def run_analyst_loop(analyst_key: str) -> None:
+            """AgentScope native: 显式有界 ReAct 循环。
+            """
+            analyst_node = self.analyst_nodes[analyst_key]
+            analyst_name = f"{analyst_key.capitalize()} Analyst"
+            tool_node_name = f"tools_{analyst_key}"
+            clear_node_name = f"Msg Clear {analyst_key.capitalize()}"
+            default_max = 1 if analyst_key == "fundamentals" else 3
+            max_tool_calls = self.conditional_logic._get_skill_max_tool_calls(
+                state, analyst_key, default_max
             )
-            agent_messages: List[Dict[str, Any]] = []
-            for agent in agents:
-                if agent.last_result is None:
-                    raise RuntimeError(f"AgentScope fanout analyst failed: {agent.name}")
-                analyst_state, timings = agent.last_result
-                analyst_state["node_timings"] = timings
-                analyst_states[agent.name] = analyst_state
-                agent_messages.append(
-                    {
-                        "topic": "agent_completed",
-                        "source": agent.name,
-                        "payload": {
-                            "report_key": ANALYST_REPORT_KEYS[agent.name],
-                            "has_report": bool(analyst_state.get(ANALYST_REPORT_KEYS[agent.name])),
-                            "duration_ms": agent.last_duration_ms,
-                            "observed_messages": [msg.to_dict() for msg in agent.observed_messages],
-                        },
-                    }
-                )
+            report_key = ANALYST_REPORT_KEYS[analyst_key]
 
-            state = self._merge_parallel_analyst_state(state, analyst_states, agent_messages)
-            node_timings.update(state.get("node_timings", {}) or {})
+            run_agent(analyst_name, analyst_node)
+            for _ in range(max_tool_calls):
+                messages = state.get("messages", [])
+                last_msg = messages[-1] if messages else None
+                report = state.get(report_key, "")
+                if report and len(report) > 100:
+                    break
+                if not (last_msg and getattr(last_msg, "tool_calls", None)):
+                    break
+                run_tool_node(tool_node_name, self.tool_map.get(analyst_key, []))
+                run_agent(analyst_name, analyst_node)
+
+            run_msg_clear(clear_node_name)
+
+        if self.parallel_analyst_pipeline_enabled and len(parallel_analysts) > 1:
+            pending_parallel_analysts = [
+                key
+                for key in parallel_analysts[: self.parallel_analyst_max_workers]
+                if should_run_node(f"{key.capitalize()} Analyst")
+            ]
+            if pending_parallel_analysts:
+                analyst_states: Dict[str, Dict[str, Any]] = {}
+                agents = [
+                    StateFunctionAgent(
+                        name=analyst_key,
+                        handler=lambda local_state, key=analyst_key: self._run_single_analyst(key, local_state),
+                    )
+                    for analyst_key in pending_parallel_analysts
+                ]
+                asyncio.run(
+                    run_agentscope_fanout(
+                        name="analyst-stage",
+                        agents=agents,
+                        state=state,
+                    )
+                )
+                agent_messages: List[Dict[str, Any]] = []
+                for agent in agents:
+                    if agent.last_result is None:
+                        raise RuntimeError(f"AgentScope fanout analyst failed: {agent.name}")
+                    analyst_state, timings = agent.last_result
+                    analyst_state["node_timings"] = timings
+                    analyst_states[agent.name] = analyst_state
+                    agent_messages.append(
+                        {
+                            "topic": "agent_completed",
+                            "source": agent.name,
+                            "payload": {
+                                "report_key": ANALYST_REPORT_KEYS[agent.name],
+                                "has_report": bool(analyst_state.get(ANALYST_REPORT_KEYS[agent.name])),
+                                "duration_ms": agent.last_duration_ms,
+                                "observed_messages": [msg.to_dict() for msg in agent.observed_messages],
+                            },
+                        }
+                    )
+
+                state = self._merge_parallel_analyst_state(state, analyst_states, agent_messages)
+                node_timings.update(state.get("node_timings", {}) or {})
+                session_id = str(state.get("session_id", "") or "")
+                if session_id:
+                    completed_nodes = [
+                        f"{key.capitalize()} Analyst"
+                        for key in pending_parallel_analysts
+                    ]
+                    last_parallel_node = completed_nodes[-1] if completed_nodes else ""
+                    try:
+                        session_runtime_service.checkpoint_sync(
+                            session_id,
+                            state_summary={
+                                "node_name": last_parallel_node,
+                                "mode": "parallel_merged",
+                                "completed_nodes": completed_nodes,
+                            },
+                            recoverable_state={
+                                "messages_count": len(state.get("messages", [])),
+                                "judge_feedback": dict(state.get("judge_feedback", {}) or {}),
+                                "judge_scores": dict(state.get("judge_scores", {}) or {}),
+                                "state": serialize_checkpoint_state(state),
+                            },
+                            checkpoint_id=f"parallel_analysts_merged_{int(time.time() * 1000)}",
+                            created_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
+                        )
+                    except Exception:
+                        pass
             sequential_analysts = sequential_analysts + [
                 key for key in parallel_analysts[self.parallel_analyst_max_workers :]
             ]
         else:
             for analyst_key in parallel_analysts:
-                analyst_node = self.analyst_nodes[analyst_key]
-                analyst_name = f"{analyst_key.capitalize()} Analyst"
-                run_agent(analyst_name, analyst_node)
-
-                while True:
-                    next_step = getattr(
-                        self.conditional_logic, f"should_continue_{analyst_key}"
-                    )(state)
-                    if next_step.startswith("tools_"):
-                        run_tool_node(next_step, self.tool_map.get(analyst_key, []))
-                        run_agent(analyst_name, analyst_node)
-                        continue
-                    if next_step.startswith("Msg Clear"):
-                        run_msg_clear(next_step)
-                    break
+                run_analyst_loop(analyst_key)
 
         for analyst_key in sequential_analysts:
-            analyst_node = self.analyst_nodes[analyst_key]
-            analyst_name = f"{analyst_key.capitalize()} Analyst"
-            run_agent(analyst_name, analyst_node)
-
-            while True:
-                next_step = getattr(
-                    self.conditional_logic, f"should_continue_{analyst_key}"
-                )(state)
-                if next_step.startswith("tools_"):
-                    run_tool_node(next_step, self.tool_map.get(analyst_key, []))
-                    run_agent(analyst_name, analyst_node)
-                    continue
-                if next_step.startswith("Msg Clear"):
-                    run_msg_clear(next_step)
-                break
+            run_analyst_loop(analyst_key)
 
         # Research debate
-        next_node = "Bull Researcher"
-        while True:
-            if next_node == "Bull Researcher":
-                run_agent(next_node, self.bull_researcher)
-            elif next_node == "Bear Researcher":
-                run_agent(next_node, self.bear_researcher)
-            elif next_node == "Research Manager":
-                run_agent(next_node, self.research_manager)
-                break
-
-            next_node = self.conditional_logic.should_continue_debate(state)
-            if next_node == "Research Manager":
-                run_agent(next_node, self.research_manager)
-                break
+        # AgentScope native: MsgHub 广播模式 — 显式轮次循环，Bull/Bear 轮流发言，
+        # 用 max_debate_rounds 控制轮数，不再依赖 conditional_logic.should_continue_debate 动态路由
+        for _ in range(self.conditional_logic.max_debate_rounds):
+            run_agent("Bull Researcher", self.bull_researcher)
+            run_agent("Bear Researcher", self.bear_researcher)
+        run_agent("Research Manager", self.research_manager)
 
         # Trader
         run_agent("Trader", self.trader)
 
         # Risk management
-        next_node = "Risky Analyst"
-        while True:
-            if next_node == "Risk Judge":
-                run_agent(next_node, self.risk_manager)
-                break
-
-            if next_node == "Risky Analyst":
-                run_agent(next_node, self.risky_analyst)
-            elif next_node == "Safe Analyst":
-                run_agent(next_node, self.safe_analyst)
-            elif next_node == "Neutral Analyst":
-                run_agent(next_node, self.neutral_analyst)
-
-            next_node = self.conditional_logic.should_continue_risk_analysis(state)
-            if next_node == "Risk Judge":
-                run_agent(next_node, self.risk_manager)
-                break
+        # AgentScope native: MsgHub 广播模式 — 显式轮次循环，三位分析师依次发言，
+        # 用 max_risk_discuss_rounds 控制轮数，不再依赖 conditional_logic.should_continue_risk_analysis 动态路由
+        for _ in range(self.conditional_logic.max_risk_discuss_rounds):
+            run_agent("Risky Analyst", self.risky_analyst)
+            run_agent("Safe Analyst", self.safe_analyst)
+            run_agent("Neutral Analyst", self.neutral_analyst)
+        run_agent("Risk Judge", self.risk_manager)
 
         if progress_sender:
             progress_sender("__end__")

@@ -4,12 +4,14 @@ import apiClient from '@/lib/api'
 import {
   Bell,
   CalendarClock,
+  ChevronDown,
   Cpu,
   Database,
   Key,
   Loader2,
   Pause,
   Play,
+  Plus,
   RefreshCw,
   Save,
   Settings as SettingsIcon,
@@ -18,6 +20,8 @@ import {
   User,
 } from 'lucide-react'
 import { clsx } from 'clsx'
+import { authApi } from '@/services/auth'
+import { useAuthStore } from '@/stores/auth'
 
 interface AppSettings {
   email: string
@@ -74,8 +78,10 @@ interface SchedulerJob {
   paused?: boolean
 }
 
+const LEGACY_DEFAULT_EMAIL = 'admin@quantscope.com'
+
 const DEFAULT_SETTINGS: AppSettings = {
-  email: 'admin@quantscope.com',
+  email: '',
   language: 'zh-CN',
   timezone: 'Asia/Shanghai',
   defaultMarket: 'A股',
@@ -92,7 +98,7 @@ const TABS: { key: TabKey; label: string; icon: React.ElementType }[] = [
   { key: 'models', label: '模型配置', icon: Cpu },
   { key: 'systemTasks', label: '系统任务', icon: CalendarClock },
   { key: 'notifications', label: '通知设置', icon: Bell },
-  { key: 'api', label: '接口配置', icon: Key },
+
   { key: 'cache', label: '缓存管理', icon: Database },
 ]
 
@@ -120,6 +126,10 @@ function loadSettings(): AppSettings {
   } catch {
     return DEFAULT_SETTINGS
   }
+}
+
+function shouldUseLoginEmail(email: string): boolean {
+  return !email || email === LEGACY_DEFAULT_EMAIL
 }
 
 function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
@@ -167,6 +177,7 @@ function inputClass(extra = '') {
 }
 
 export default function Settings() {
+  const { token, user, setUser } = useAuthStore()
   const [activeTab, setActiveTab] = useState<TabKey>('general')
   const [settings, setSettings] = useState<AppSettings>(loadSettings)
   const [saving, setSaving] = useState(false)
@@ -182,10 +193,45 @@ export default function Settings() {
   const [modelDefaults, setModelDefaults] = useState({ quick: '', deep: '' })
   const [schedulerJobs, setSchedulerJobs] = useState<SchedulerJob[]>([])
   const [schedulerLoading, setSchedulerLoading] = useState(false)
+  const [showAddProvider, setShowAddProvider] = useState(false)
+  const [addProviderSaving, setAddProviderSaving] = useState(false)
+  const [addProviderForm, setAddProviderForm] = useState({
+    name: '',
+    display_name: '',
+    description: '',
+    website: '',
+    api_doc_url: '',
+    default_base_url: '',
+    api_key: '',
+    supported_features: [] as string[],
+    is_active: true,
+  })
+  const [selectedPreset, setSelectedPreset] = useState('')
 
   const enabledModels = useMemo(() => llmConfigs.filter(m => m.enabled), [llmConfigs])
   const quickModel = systemSettings.quick_analysis_model || systemSettings.default_llm || enabledModels[0]?.model_name || ''
   const deepModel = systemSettings.deep_analysis_model || systemSettings.default_llm || enabledModels[0]?.model_name || ''
+
+  useEffect(() => {
+    const applyLoginEmail = (email?: string) => {
+      if (!email) return
+      setSettings(prev => shouldUseLoginEmail(prev.email) ? { ...prev, email } : prev)
+    }
+
+    applyLoginEmail(user?.email)
+
+    if (user?.email || !token) return
+
+    authApi.getCurrentUser()
+      .then(response => {
+        const currentUser = response.data
+        setUser(currentUser)
+        applyLoginEmail(currentUser?.email)
+      })
+      .catch(() => {
+        // 保持本地设置可用，获取用户信息失败不阻塞设置页。
+      })
+  }, [setUser, token, user?.email])
 
   useEffect(() => {
     if (settings.notifyDesktop && typeof Notification !== 'undefined' && Notification.permission === 'default') {
@@ -275,6 +321,60 @@ export default function Settings() {
       loadModelConfig()
     } catch (error: any) {
       toast.error(error.response?.data?.detail || '保存厂家配置失败')
+    }
+  }
+
+  const PRESET_PROVIDERS = [
+    { name: 'dashscope', display_name: '阿里云百炼', description: '阿里云百炼大模型服务平台，提供通义千问等模型', website: 'https://bailian.console.aliyun.com', api_doc_url: 'https://help.aliyun.com/zh/dashscope/', default_base_url: 'https://dashscope.aliyuncs.com/api/v1', supported_features: ['chat', 'completion', 'embedding', 'function_calling', 'streaming'] },
+    { name: 'deepseek', display_name: 'DeepSeek', description: 'DeepSeek提供高性能的AI推理服务', website: 'https://www.deepseek.com', api_doc_url: 'https://platform.deepseek.com/api-docs', default_base_url: 'https://api.deepseek.com', supported_features: ['chat', 'completion', 'function_calling', 'streaming'] },
+    { name: 'openai', display_name: 'OpenAI', description: 'OpenAI是人工智能领域的领先公司，提供GPT系列模型', website: 'https://openai.com', api_doc_url: 'https://platform.openai.com/docs', default_base_url: 'https://api.openai.com/v1', supported_features: ['chat', 'completion', 'embedding', 'vision', 'function_calling', 'streaming'] },
+    { name: 'anthropic', display_name: 'Anthropic', description: 'Anthropic专注于AI安全研究，提供Claude系列模型', website: 'https://anthropic.com', api_doc_url: 'https://docs.anthropic.com', default_base_url: 'https://api.anthropic.com', supported_features: ['chat', 'completion', 'function_calling', 'streaming'] },
+    { name: '302ai', display_name: '302.AI', description: '302.AI是企业级AI聚合平台', website: 'https://302.ai', api_doc_url: 'https://doc.302.ai', default_base_url: 'https://api.302.ai/v1', supported_features: ['chat', 'completion', 'embedding', 'vision', 'function_calling', 'streaming'] },
+    { name: 'zhipu', display_name: '智谱AI', description: '智谱AI提供GLM系列中文大模型', website: 'https://zhipuai.cn', api_doc_url: 'https://open.bigmodel.cn/doc', default_base_url: 'https://open.bigmodel.cn/api/paas/v4', supported_features: ['chat', 'completion', 'embedding', 'function_calling', 'streaming'] },
+    { name: 'baidu', display_name: '百度智能云', description: '百度提供的文心一言等AI服务', website: 'https://cloud.baidu.com', api_doc_url: 'https://cloud.baidu.com/doc/WENXINWORKSHOP/index.html', default_base_url: 'https://aip.baidubce.com', supported_features: ['chat', 'completion', 'embedding', 'streaming'] },
+    { name: 'google', display_name: 'Google AI', description: 'Google的人工智能平台，提供Gemini系列模型', website: 'https://ai.google.dev', api_doc_url: 'https://ai.google.dev/docs', default_base_url: 'https://generativelanguage.googleapis.com/v1', supported_features: ['chat', 'completion', 'embedding', 'vision', 'function_calling', 'streaming'] },
+  ]
+
+  const handlePresetChange = (presetName: string) => {
+    setSelectedPreset(presetName)
+    if (!presetName) {
+      setAddProviderForm({ name: '', display_name: '', description: '', website: '', api_doc_url: '', default_base_url: '', api_key: '', supported_features: [], is_active: true })
+      return
+    }
+    const preset = PRESET_PROVIDERS.find(p => p.name === presetName)
+    if (preset) {
+      setAddProviderForm({ ...preset, api_key: '', is_active: true })
+    }
+  }
+
+  const handleAddProvider = async () => {
+    if (!addProviderForm.name.trim()) {
+      toast.error('请输入厂家ID')
+      return
+    }
+    if (!addProviderForm.display_name.trim()) {
+      toast.error('请输入显示名称')
+      return
+    }
+    if (addProviderForm.supported_features.length === 0) {
+      toast.error('请至少选择一个支持的功能')
+      return
+    }
+    setAddProviderSaving(true)
+    try {
+      const payload: any = { ...addProviderForm }
+      // 如果 api_key 为空，删除该字段
+      if (!payload.api_key) delete payload.api_key
+      await apiClient.post('/config/llm/providers', payload)
+      toast.success('厂家添加成功')
+      setShowAddProvider(false)
+      setAddProviderForm({ name: '', display_name: '', description: '', website: '', api_doc_url: '', default_base_url: '', api_key: '', supported_features: [], is_active: true })
+      setSelectedPreset('')
+      loadModelConfig()
+    } catch (error: any) {
+      toast.error(error.response?.data?.detail || '添加厂家失败')
+    } finally {
+      setAddProviderSaving(false)
     }
   }
 
@@ -395,9 +495,129 @@ export default function Settings() {
       </Panel>
 
       <Panel icon={Key} title="模型厂家">
+        {/* 添加厂家按钮 */}
+        <div className="mb-4">
+          <button
+            onClick={() => setShowAddProvider(prev => !prev)}
+            className="flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-500/20 text-blue-300 border border-blue-500/30 text-sm hover:bg-blue-500/30 transition-all"
+          >
+            <Plus className="w-4 h-4" />
+            {showAddProvider ? '收起' : '添加厂家'}
+          </button>
+        </div>
+
+        {/* 添加厂家表单 */}
+        {showAddProvider && (
+          <div className="mb-6 p-4 rounded-xl border border-blue-500/20 bg-blue-500/5">
+            <h4 className="text-white font-medium mb-4">添加新厂家</h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm text-white/60 mb-1">快速选择</label>
+                <select
+                  value={selectedPreset}
+                  onChange={e => handlePresetChange(e.target.value)}
+                  className={inputClass('w-full')}
+                >
+                  <option value="">— 选择预设厂家或手动填写 —</option>
+                  {PRESET_PROVIDERS.map(p => (
+                    <option key={p.name} value={p.name}>{p.display_name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm text-white/60 mb-1">厂家ID <span className="text-red-400">*</span></label>
+                <input
+                  value={addProviderForm.name}
+                  onChange={e => setAddProviderForm(prev => ({ ...prev, name: e.target.value }))}
+                  placeholder="如: openai, deepseek"
+                  className={inputClass('w-full')}
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-white/60 mb-1">显示名称 <span className="text-red-400">*</span></label>
+                <input
+                  value={addProviderForm.display_name}
+                  onChange={e => setAddProviderForm(prev => ({ ...prev, display_name: e.target.value }))}
+                  placeholder="如: OpenAI, DeepSeek"
+                  className={inputClass('w-full')}
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-white/60 mb-1">默认API地址</label>
+                <input
+                  value={addProviderForm.default_base_url}
+                  onChange={e => setAddProviderForm(prev => ({ ...prev, default_base_url: e.target.value }))}
+                  placeholder="https://api.openai.com/v1"
+                  className={inputClass('w-full')}
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-white/60 mb-1">API Key</label>
+                <input
+                  type="password"
+                  value={addProviderForm.api_key}
+                  onChange={e => setAddProviderForm(prev => ({ ...prev, api_key: e.target.value }))}
+                  placeholder="留空则使用环境变量"
+                  className={inputClass('w-full')}
+                />
+              </div>
+              <div className="md:col-span-2">
+                <label className="block text-sm text-white/60 mb-1">支持功能 <span className="text-red-400">*</span></label>
+                <div className="flex flex-wrap gap-2">
+                  {['chat', 'completion', 'embedding', 'vision', 'function_calling', 'streaming'].map(feature => (
+                    <label key={feature} className="flex items-center gap-1.5 text-sm text-white/70 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={addProviderForm.supported_features.includes(feature)}
+                        onChange={e => {
+                          setAddProviderForm(prev => ({
+                            ...prev,
+                            supported_features: e.target.checked
+                              ? [...prev.supported_features, feature]
+                              : prev.supported_features.filter(f => f !== feature)
+                          }))
+                        }}
+                        className="rounded"
+                      />
+                      {feature}
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div className="md:col-span-2">
+                <label className="flex items-center gap-2 text-white/70 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={addProviderForm.is_active}
+                    onChange={e => setAddProviderForm(prev => ({ ...prev, is_active: e.target.checked }))}
+                    className="rounded"
+                  />
+                  启用该厂家
+                </label>
+              </div>
+            </div>
+            <div className="mt-4 flex justify-end gap-3">
+              <button
+                onClick={() => { setShowAddProvider(false); setSelectedPreset(''); setAddProviderForm({ name: '', display_name: '', description: '', website: '', api_doc_url: '', default_base_url: '', api_key: '', supported_features: [], is_active: true }) }}
+                className="px-4 py-2 rounded-lg bg-white/5 text-white/60 text-sm hover:bg-white/10"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleAddProvider}
+                disabled={addProviderSaving}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-blue-500 to-cyan-500 text-white text-sm font-medium disabled:opacity-50"
+              >
+                {addProviderSaving && <Loader2 className="w-4 h-4 animate-spin" />}
+                添加厂家
+              </button>
+            </div>
+          </div>
+        )}
+
         <div className="space-y-3">
-          {providers.length === 0 ? (
-            <p className="text-white/40 text-sm">暂无厂家配置</p>
+          {providers.length === 0 && !showAddProvider ? (
+            <p className="text-white/40 text-sm">暂无厂家配置，请点击上方"添加厂家"</p>
           ) : providers.map(provider => (
             <div key={provider.id} className="rounded-xl border border-white/5 bg-white/[0.03] p-4">
               <div className="flex items-start justify-between gap-4">
@@ -436,9 +656,93 @@ export default function Settings() {
       </Panel>
 
       <Panel icon={Cpu} title="模型清单">
+        {/* 添加模型表单 */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+          <div>
+            <label className="block text-sm text-white/60 mb-1">模型厂家</label>
+            <select
+              value={modelForm.provider}
+              onChange={e => setModelForm(prev => ({ ...prev, provider: e.target.value }))}
+              className={inputClass('w-full')}
+            >
+              <option value="">请选择厂家</option>
+              {providers.map(provider => (
+                <option key={provider.name} value={provider.name}>{provider.display_name || provider.name}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm text-white/60 mb-1">模型名称</label>
+            <input
+              value={modelForm.model_name}
+              onChange={e => setModelForm(prev => ({ ...prev, model_name: e.target.value }))}
+              placeholder="例如 qwen-max / deepseek-chat"
+              className={inputClass('w-full')}
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-white/60 mb-1">显示名称</label>
+            <input
+              value={modelForm.model_display_name || ''}
+              onChange={e => setModelForm(prev => ({ ...prev, model_display_name: e.target.value }))}
+              className={inputClass('w-full')}
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-white/60 mb-1">API Base（可选）</label>
+            <input
+              value={modelForm.api_base || ''}
+              onChange={e => setModelForm(prev => ({ ...prev, api_base: e.target.value }))}
+              placeholder="默认使用厂家 Base URL"
+              className={inputClass('w-full')}
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-white/60 mb-1">Max Tokens</label>
+            <input
+              type="number"
+              value={modelForm.max_tokens}
+              onChange={e => setModelForm(prev => ({ ...prev, max_tokens: Number(e.target.value) }))}
+              className={inputClass('w-full')}
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-white/60 mb-1">Temperature</label>
+            <input
+              type="number"
+              min={0}
+              max={2}
+              step={0.1}
+              value={modelForm.temperature}
+              onChange={e => setModelForm(prev => ({ ...prev, temperature: Number(e.target.value) }))}
+              className={inputClass('w-full')}
+            />
+          </div>
+        </div>
+        <div className="flex items-center justify-between mb-4">
+          <label className="flex items-center gap-2 text-white/70 text-sm">
+            <input
+              type="checkbox"
+              checked={modelForm.enabled}
+              onChange={e => setModelForm(prev => ({ ...prev, enabled: e.target.checked }))}
+              className="rounded"
+            />
+            启用模型
+          </label>
+          <button
+            onClick={handleSaveModel}
+            disabled={modelSaving}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-blue-500 to-cyan-500 text-white text-sm font-medium disabled:opacity-50"
+          >
+            {modelSaving && <Loader2 className="w-4 h-4 animate-spin" />}
+            保存模型
+          </button>
+        </div>
+
+        {/* 模型列表 */}
         <div className="space-y-3">
           {llmConfigs.length === 0 ? (
-            <p className="text-white/40 text-sm">暂无模型配置，请在下方添加。</p>
+            <p className="text-white/40 text-sm">暂无模型配置，请在上方添加。</p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -482,88 +786,6 @@ export default function Settings() {
         </div>
       </Panel>
 
-      <Panel icon={Save} title={modelForm.model_name ? '添加 / 更新模型' : '添加模型'}>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm text-white/60 mb-2">模型厂家</label>
-            <select
-              value={modelForm.provider}
-              onChange={e => setModelForm(prev => ({ ...prev, provider: e.target.value }))}
-              className={inputClass('w-full')}
-            >
-              <option value="">请选择厂家</option>
-              {providers.map(provider => (
-                <option key={provider.name} value={provider.name}>{provider.display_name || provider.name}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm text-white/60 mb-2">模型名称</label>
-            <input
-              value={modelForm.model_name}
-              onChange={e => setModelForm(prev => ({ ...prev, model_name: e.target.value }))}
-              placeholder="例如 qwen-max / deepseek-chat"
-              className={inputClass('w-full')}
-            />
-          </div>
-          <div>
-            <label className="block text-sm text-white/60 mb-2">显示名称</label>
-            <input
-              value={modelForm.model_display_name || ''}
-              onChange={e => setModelForm(prev => ({ ...prev, model_display_name: e.target.value }))}
-              className={inputClass('w-full')}
-            />
-          </div>
-          <div>
-            <label className="block text-sm text-white/60 mb-2">API Base（可选）</label>
-            <input
-              value={modelForm.api_base || ''}
-              onChange={e => setModelForm(prev => ({ ...prev, api_base: e.target.value }))}
-              placeholder="默认使用厂家 Base URL"
-              className={inputClass('w-full')}
-            />
-          </div>
-          <div>
-            <label className="block text-sm text-white/60 mb-2">Max Tokens</label>
-            <input
-              type="number"
-              value={modelForm.max_tokens}
-              onChange={e => setModelForm(prev => ({ ...prev, max_tokens: Number(e.target.value) }))}
-              className={inputClass('w-full')}
-            />
-          </div>
-          <div>
-            <label className="block text-sm text-white/60 mb-2">Temperature</label>
-            <input
-              type="number"
-              min={0}
-              max={2}
-              step={0.1}
-              value={modelForm.temperature}
-              onChange={e => setModelForm(prev => ({ ...prev, temperature: Number(e.target.value) }))}
-              className={inputClass('w-full')}
-            />
-          </div>
-        </div>
-        <div className="mt-4 flex items-center justify-between">
-          <label className="flex items-center gap-2 text-white/70 text-sm">
-            <input
-              type="checkbox"
-              checked={modelForm.enabled}
-              onChange={e => setModelForm(prev => ({ ...prev, enabled: e.target.checked }))}
-            />
-            启用模型
-          </label>
-          <button
-            onClick={handleSaveModel}
-            disabled={modelSaving}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-blue-500 to-cyan-500 text-white text-sm font-medium disabled:opacity-50"
-          >
-            {modelSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-            保存模型
-          </button>
-        </div>
-      </Panel>
     </div>
   )
 
@@ -615,7 +837,7 @@ export default function Settings() {
     if (activeTab === 'general') {
       return (
         <Panel icon={User} title="通用设置">
-          <SettingRow title="用户名"><span className="text-white/40 text-sm">admin（不可更改）</span></SettingRow>
+          <SettingRow title="用户名"><span className="text-white/40 text-sm">{user?.username || '—'}（不可更改）</span></SettingRow>
           <SettingRow title="邮箱" description="用于接收分析报告">
             <input value={settings.email} onChange={e => update('email', e.target.value)} className={inputClass('w-64 text-right')} />
           </SettingRow>
@@ -680,19 +902,6 @@ export default function Settings() {
       )
     }
 
-    if (activeTab === 'api') {
-      return (
-        <Panel icon={Key} title="接口配置">
-          <SettingRow title="前端 API 代理">
-            <input readOnly value="/api -> http://localhost:8000" className={inputClass('w-72 text-right text-white/60')} />
-          </SettingRow>
-          <SettingRow title="鉴权状态">
-            <span className="text-white/40 text-sm">使用登录 Token 自动附加 Authorization</span>
-          </SettingRow>
-        </Panel>
-      )
-    }
-
     return (
       <Panel icon={Database} title="缓存管理">
         <div className="flex items-center justify-between">
@@ -714,7 +923,7 @@ export default function Settings() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-white">系统设置</h1>
-          <p className="text-white/40 mt-1">轻量管理偏好、模型厂家与默认分析模型</p>
+
         </div>
         <button
           onClick={activeTab === 'models' ? loadModelConfig : activeTab === 'systemTasks' ? loadSchedulerJobs : handleSaveLocalSettings}

@@ -8,21 +8,31 @@ services:
   backend:
     build:
       context: .
-      dockerfile: Dockerfile.backend
-    image: quantscope-backend:v1.0.0-preview
+      dockerfile: Dockerfile.backend-dev
+    image: quantscope-backend-dev:latest
     container_name: quantscope-backend
     ports:
       - "8000:8000"
     volumes:
+      # 本地代码热更新（覆盖镜像内代码）
+      - ./app:/app/app
+      - ./tradingagents:/app/tradingagents
+      - ./mcp_servers:/app/mcp_servers
       # 日志目录映射
       - ./logs:/app/logs
       # 配置目录映射
       - ./config:/app/config
       # 数据目录映射
       - ./data:/app/data
+    command: ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
     env_file:
       - .env
+    dns:
+      - 223.5.5.5
+      - 119.29.29.29
+      - 8.8.8.8
     environment:
+      PYTHONPATH: "/app/tradingagents:/app"
       PYTHONUNBUFFERED: 1
       PYTHONDONTWRITEBYTECODE: 1
       TZ: "Asia/Shanghai"
@@ -70,7 +80,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.frontend
-    image: quantscope-frontend:v1.0.0-preview
+    image: quantscope-frontend:v1.0.0
     container_name: quantscope-frontend
     ports:
       - "3000:80"

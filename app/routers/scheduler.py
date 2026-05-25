@@ -240,8 +240,8 @@ async def get_job_history(
         任务执行历史记录
     """
     try:
-        history = await service.get_job_history(job_id, limit=limit, offset=offset)
-        total = await service.count_job_history(job_id)
+        history = await service.get_job_history(job_id, limit=limit, offset=offset, user_id=user["id"])
+        total = await service.count_job_history(job_id, user_id=user["id"])
         
         return ok(
             data={
@@ -282,9 +282,10 @@ async def get_all_history(
             limit=limit,
             offset=offset,
             job_id=job_id,
-            status=status
+            status=status,
+            user_id=user["id"]
         )
-        total = await service.count_all_history(job_id=job_id, status=status)
+        total = await service.count_all_history(job_id=job_id, status=status, user_id=user["id"])
         
         return ok(
             data={
@@ -364,9 +365,10 @@ async def get_job_executions(
             status=status,
             is_manual=is_manual,
             limit=limit,
-            offset=offset
+            offset=offset,
+            user_id=user["id"]
         )
-        total = await service.count_job_executions(job_id=job_id, status=status, is_manual=is_manual)
+        total = await service.count_job_executions(job_id=job_id, status=status, is_manual=is_manual, user_id=user["id"])
         return ok(data={
             "items": executions,
             "total": total,
@@ -406,9 +408,10 @@ async def get_single_job_executions(
             status=status,
             is_manual=is_manual,
             limit=limit,
-            offset=offset
+            offset=offset,
+            user_id=user["id"]
         )
-        total = await service.count_job_executions(job_id=job_id, status=status, is_manual=is_manual)
+        total = await service.count_job_executions(job_id=job_id, status=status, is_manual=is_manual, user_id=user["id"])
         return ok(data={
             "items": executions,
             "total": total,
@@ -435,7 +438,7 @@ async def get_job_execution_stats(
         统计信息
     """
     try:
-        stats = await service.get_job_execution_stats(job_id)
+        stats = await service.get_job_execution_stats(job_id, user_id=user["id"])
         return ok(data=stats, message="获取统计信息成功")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取统计信息失败: {str(e)}")
@@ -518,7 +521,7 @@ async def delete_execution(
         操作结果
     """
     try:
-        success = await service.delete_execution(execution_id)
+        success = await service.delete_execution(execution_id, user_id=user["id"])
         if success:
             return ok(message="执行记录已删除")
         else:

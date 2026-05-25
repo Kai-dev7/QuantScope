@@ -1,7 +1,7 @@
 """
 AKShare data source adapter
 """
-from typing import Optional, Dict
+from typing import Optional, Dict, Callable, List, Tuple
 import logging
 from datetime import datetime, timedelta
 import pandas as pd
@@ -33,84 +33,107 @@ class AKShareAdapter(DataSourceAdapter):
             return False
 
     def get_stock_list(self) -> Optional[pd.DataFrame]:
-        """获取股票列表（使用 AKShare 的 stock_info_a_code_name 接口获取真实股票名称）"""
+        """获取股票列表，主接口失败时降级到行情快照接口。"""
         if not self.is_available():
             return None
+
         try:
             import akshare as ak
-            logger.info("AKShare: Fetching stock list with real names from stock_info_a_code_name()...")
-
-            # 使用 AKShare 的 stock_info_a_code_name 接口获取股票代码和名称
-            df = ak.stock_info_a_code_name()
-
-            if df is None or df.empty:
-                logger.warning("AKShare: stock_info_a_code_name() returned empty data")
-                return None
-
-            # 标准化列名（AKShare 返回的列名可能是中文）
-            # 通常返回的列：code（代码）、name（名称）
-            df = df.rename(columns={
-                'code': 'symbol',
-                '代码': 'symbol',
-                'name': 'name',
-                '名称': 'name'
-            })
-
-            # 确保有必需的列
-            if 'symbol' not in df.columns or 'name' not in df.columns:
-                logger.error(f"AKShare: Unexpected column names: {df.columns.tolist()}")
-                return None
-
-            # 生成 ts_code 和其他字段
-            def generate_ts_code(code: str) -> str:
-                """根据股票代码生成 ts_code"""
-                if not code:
-                    return ""
-                code = str(code).zfill(6)
-                if code.startswith(('60', '68', '90')):
-                    return f"{code}.SH"
-                elif code.startswith(('00', '30', '20')):
-                    return f"{code}.SZ"
-                elif code.startswith(('8', '4')):
-                    return f"{code}.BJ"
-                else:
-                    return f"{code}.SZ"  # 默认深圳
-
-            def get_market(code: str) -> str:
-                """根据股票代码判断市场"""
-                if not code:
-                    return ""
-                code = str(code).zfill(6)
-                if code.startswith('000'):
-                    return '主板'
-                elif code.startswith('002'):
-                    return '中小板'
-                elif code.startswith('300'):
-                    return '创业板'
-                elif code.startswith('60'):
-                    return '主板'
-                elif code.startswith('688'):
-                    return '科创板'
-                elif code.startswith('8'):
-                    return '北交所'
-                elif code.startswith('4'):
-                    return '新三板'
-                else:
-                    return '未知'
-
-            # 添加 ts_code 和 market 字段
-            df['ts_code'] = df['symbol'].apply(generate_ts_code)
-            df['market'] = df['symbol'].apply(get_market)
-            df['area'] = ''
-            df['industry'] = ''
-            df['list_date'] = ''
-
-            logger.info(f"AKShare: Successfully fetched {len(df)} stocks with real names")
-            return df
-
-        except Exception as e:
-            logger.error(f"AKShare: Failed to fetch stock list: {e}")
+        except ImportError:
             return None
+
+        fetchers: List[Tuple[str, Callable[[], Optional[pd.DataFrame]]]] = [
+            ("stock_info_a_code_name", ak.stock_info_a_code_name),
+            ("stock_zh_a_spot_em", ak.stock_zh_a_spot_em),
+        ]
+
+        for source_name, fetcher in fetchers:
+            try:
+                logger.info(f"AKShare: Fetching stock list from {source_name}()...")
+                raw_df = fetcher()
+                df = self._normalize_stock_list(raw_df, source_name)
+                if df is not None and not df.empty:
+                    logger.info(f"AKShare: Successfully fetched {len(df)} stocks from {source_name}()")
+                    return df
+            except Exception:
+                logger.warning(
+                    f"AKShare: {source_name}() failed while fetching stock list",
+                    exc_info=True,
+                )
+
+        logger.error("AKShare: Failed to fetch stock list from all configured AKShare APIs")
+        return None
+
+    def _normalize_stock_list(self, df: Optional[pd.DataFrame], source_name: str) -> Optional[pd.DataFrame]:
+        if df is None or df.empty:
+            logger.warning(f"AKShare: {source_name}() returned empty data")
+            return None
+
+        df = df.copy()
+        code_col = next((c for c in ["symbol", "code", "代码", "股票代码"] if c in df.columns), None)
+        name_col = next((c for c in ["name", "名称", "股票简称", "股票名称"] if c in df.columns), None)
+
+        if not code_col or not name_col:
+            logger.warning(f"AKShare: {source_name}() returned unexpected columns: {df.columns.tolist()}")
+            return None
+
+        normalized = pd.DataFrame({
+            "symbol": df[code_col].apply(self._normalize_symbol),
+            "name": df[name_col].fillna("").astype(str),
+        })
+        normalized = normalized[normalized["symbol"].str.len() == 6]
+        normalized = normalized.drop_duplicates(subset=["symbol"], keep="first")
+
+        if normalized.empty:
+            logger.warning(f"AKShare: {source_name}() had no valid A-share symbols")
+            return None
+
+        normalized["ts_code"] = normalized["symbol"].apply(self._generate_ts_code)
+        normalized["market"] = normalized["symbol"].apply(self._get_market)
+        normalized["area"] = ""
+        normalized["industry"] = ""
+        normalized["list_date"] = ""
+        return normalized[["symbol", "name", "ts_code", "area", "industry", "market", "list_date"]]
+
+    def _normalize_symbol(self, code) -> str:
+        if code is None or pd.isna(code):
+            return ""
+        digits = "".join(ch for ch in str(code).strip() if ch.isdigit())
+        return digits[-6:].zfill(6) if digits else ""
+
+    def _generate_ts_code(self, code: str) -> str:
+        if not code:
+            return ""
+        code = str(code).zfill(6)
+        if code.startswith(('60', '68', '90')):
+            return f"{code}.SH"
+        elif code.startswith(('00', '30', '20')):
+            return f"{code}.SZ"
+        elif code.startswith(('8', '4')):
+            return f"{code}.BJ"
+        else:
+            return f"{code}.SZ"
+
+    def _get_market(self, code: str) -> str:
+        if not code:
+            return ""
+        code = str(code).zfill(6)
+        if code.startswith('000'):
+            return '主板'
+        elif code.startswith('002'):
+            return '中小板'
+        elif code.startswith('300'):
+            return '创业板'
+        elif code.startswith('60'):
+            return '主板'
+        elif code.startswith('688'):
+            return '科创板'
+        elif code.startswith('8'):
+            return '北交所'
+        elif code.startswith('4'):
+            return '新三板'
+        else:
+            return '未知'
 
     def get_daily_basic(self, trade_date: str) -> Optional[pd.DataFrame]:
         """获取每日基础财务数据（快速版）"""
@@ -389,4 +412,3 @@ class AKShareAdapter(DataSourceAdapter):
         yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d")
         logger.info(f"AKShare: Using yesterday as trade date: {yesterday}")
         return yesterday
-

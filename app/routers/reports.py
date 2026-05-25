@@ -10,6 +10,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
+from bson import ObjectId
 
 from .auth_db import get_current_user
 from ..core.database import get_mongo_db
@@ -98,6 +99,27 @@ def _build_report_query(report_id: str) -> Dict[str, Any]:
         pass
     return {"$or": ors}
 
+
+def _build_user_scope_query(user_id: str) -> Dict[str, Any]:
+    """构建用户隔离查询，兼容 user_id/user 和字符串/ObjectId 两类历史数据。"""
+    uid_candidates: List[Any] = [user_id]
+    try:
+        uid_candidates.append(ObjectId(user_id))
+    except Exception:
+        pass
+
+    condition: Any = uid_candidates[0] if len(uid_candidates) == 1 else {"$in": uid_candidates}
+    return {"$or": [{"user_id": condition}, {"user": condition}]}
+
+
+def _merge_and_query(*conditions: Dict[str, Any]) -> Dict[str, Any]:
+    valid_conditions = [condition for condition in conditions if condition]
+    if not valid_conditions:
+        return {}
+    if len(valid_conditions) == 1:
+        return valid_conditions[0]
+    return {"$and": valid_conditions}
+
 router = APIRouter(prefix="/api/reports", tags=["reports"])
 
 class ReportFilter(BaseModel):
@@ -133,18 +155,23 @@ async def get_reports_list(
 
         db = get_mongo_db()
 
-        # 构建查询条件
-        query = {}
+        # 构建查询条件，强制限定当前用户
+        query = _build_user_scope_query(user["id"])
 
         # 搜索关键词
         if search_keyword:
-            query["$or"] = [
-                {"stock_symbol": {"$regex": search_keyword, "$options": "i"}},
-                {"stock_name": {"$regex": search_keyword, "$options": "i"}},
-                {"analysis_id": {"$regex": search_keyword, "$options": "i"}},
-                {"summary": {"$regex": search_keyword, "$options": "i"}},
-                {"recommendation": {"$regex": search_keyword, "$options": "i"}}
-            ]
+            query = _merge_and_query(
+                query,
+                {
+                    "$or": [
+                        {"stock_symbol": {"$regex": search_keyword, "$options": "i"}},
+                        {"stock_name": {"$regex": search_keyword, "$options": "i"}},
+                        {"analysis_id": {"$regex": search_keyword, "$options": "i"}},
+                        {"summary": {"$regex": search_keyword, "$options": "i"}},
+                        {"recommendation": {"$regex": search_keyword, "$options": "i"}}
+                    ]
+                }
+            )
 
         # 市场筛选
         if market_filter:
@@ -249,14 +276,17 @@ async def get_report_detail(
         db = get_mongo_db()
 
         # 支持 ObjectId / analysis_id / task_id
-        query = _build_report_query(report_id)
+        query = _merge_and_query(_build_report_query(report_id), _build_user_scope_query(user["id"]))
         doc = await db.analysis_reports.find_one(query)
 
         if not doc:
             # 兜底：从 analysis_tasks.result 中还原报告详情
             logger.info(f"⚠️ 未在analysis_reports找到，尝试从analysis_tasks还原: {report_id}")
             tasks_doc = await db.analysis_tasks.find_one(
-                {"$or": [{"task_id": report_id}, {"result.analysis_id": report_id}]},
+                _merge_and_query(
+                    {"$or": [{"task_id": report_id}, {"result.analysis_id": report_id}]},
+                    _build_user_scope_query(user["id"])
+                ),
                 {"result": 1, "task_id": 1, "stock_code": 1, "created_at": 1, "completed_at": 1}
             )
             if not tasks_doc or not tasks_doc.get("result"):
@@ -367,7 +397,7 @@ async def get_report_module_content(
         db = get_mongo_db()
 
         # 查询报告（支持多种ID）
-        query = _build_report_query(report_id)
+        query = _merge_and_query(_build_report_query(report_id), _build_user_scope_query(user["id"]))
         doc = await db.analysis_reports.find_one(query)
 
         if not doc:
@@ -408,7 +438,7 @@ async def delete_report(
         db = get_mongo_db()
 
         # 查询报告（支持多种ID）
-        query = _build_report_query(report_id)
+        query = _merge_and_query(_build_report_query(report_id), _build_user_scope_query(user["id"]))
         result = await db.analysis_reports.delete_one(query)
 
         if result.deleted_count == 0:
@@ -447,7 +477,7 @@ async def download_report(
         db = get_mongo_db()
 
         # 查询报告（支持多种ID）
-        query = _build_report_query(report_id)
+        query = _merge_and_query(_build_report_query(report_id), _build_user_scope_query(user["id"]))
         doc = await db.analysis_reports.find_one(query)
 
         if not doc:

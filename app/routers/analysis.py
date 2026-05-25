@@ -11,6 +11,7 @@ import logging
 import time
 import uuid
 import asyncio
+from bson import ObjectId
 
 from app.routers.auth_db import get_current_user
 from app.services.queue_service import get_queue_service, QueueService
@@ -27,6 +28,27 @@ from app.models.analysis import (
 
 router = APIRouter()
 logger = logging.getLogger("webapi")
+
+
+def _build_user_scope_query(user_id: str) -> Dict[str, Any]:
+    """Build a MongoDB user-scope query compatible with string/ObjectId legacy fields."""
+    uid_candidates: List[Any] = [user_id]
+    try:
+        uid_candidates.append(ObjectId(user_id))
+    except Exception:
+        pass
+
+    condition: Any = uid_candidates[0] if len(uid_candidates) == 1 else {"$in": uid_candidates}
+    return {"$or": [{"user_id": condition}, {"user": condition}]}
+
+
+def _merge_and_query(*conditions: Dict[str, Any]) -> Dict[str, Any]:
+    valid_conditions = [condition for condition in conditions if condition]
+    if not valid_conditions:
+        return {}
+    if len(valid_conditions) == 1:
+        return valid_conditions[0]
+    return {"$and": valid_conditions}
 
 # 兼容性：保留原有的请求模型
 class SingleAnalyzeRequest(BaseModel):
@@ -150,7 +172,7 @@ async def get_task_status_new(
         analysis_service = get_simple_analysis_service()
         logger.info(f"🔧 [NEW ROUTE] 获取分析服务实例: {id(analysis_service)}")
 
-        result = await analysis_service.get_task_status(task_id)
+        result = await analysis_service.get_task_status(task_id, user_id=user["id"])
         logger.info(f"📊 [NEW ROUTE] 查询结果: {result is not None}")
 
         if result:
@@ -168,10 +190,9 @@ async def get_task_status_new(
 
             # 首先从analysis_tasks集合中查找（正在进行的任务）
             # 🔒 加入 user_id 隔离：只能查看自己的任务
-            task_result = await db.analysis_tasks.find_one({
-                "task_id": task_id,
-                "$or": [{"user_id": user["id"]}, {"user": user["id"]}]
-            })
+            task_result = await db.analysis_tasks.find_one(
+                _merge_and_query({"task_id": task_id}, _build_user_scope_query(user["id"]))
+            )
 
             if task_result:
                 logger.info(f"✅ [STATUS] 从analysis_tasks找到任务: {task_id}")
@@ -212,10 +233,9 @@ async def get_task_status_new(
 
             # 如果analysis_tasks中没有找到，再从analysis_reports集合中查找（已完成的任务）
             # 🔒 加入 user_id 隔离
-            mongo_result = await db.analysis_reports.find_one({
-                "task_id": task_id,
-                "$or": [{"user_id": user["id"]}, {"user": user["id"]}]
-            })
+            mongo_result = await db.analysis_reports.find_one(
+                _merge_and_query({"task_id": task_id}, _build_user_scope_query(user["id"]))
+            )
 
             if mongo_result:
                 logger.info(f"✅ [STATUS] 从analysis_reports找到任务: {task_id}")
@@ -272,7 +292,7 @@ async def get_task_result(
         logger.info(f"👤 [RESULT] 用户: {user}")
 
         analysis_service = get_simple_analysis_service()
-        task_status = await analysis_service.get_task_status(task_id)
+        task_status = await analysis_service.get_task_status(task_id, user_id=user["id"])
 
         result_data = None
 
@@ -302,21 +322,22 @@ async def get_task_result(
 
             # 从analysis_reports集合中查找（优先使用 task_id 匹配）
             # 🔒 加入 user_id 隔离
-            mongo_result = await db.analysis_reports.find_one({
-                "task_id": task_id,
-                "$or": [{"user_id": user["id"]}, {"user": user["id"]}]
-            })
+            mongo_result = await db.analysis_reports.find_one(
+                _merge_and_query({"task_id": task_id}, _build_user_scope_query(user["id"]))
+            )
 
             if not mongo_result:
                 # 兼容旧数据：旧记录可能没有 task_id，但 analysis_id 存在于 analysis_tasks.result
                 tasks_doc_for_id = await db.analysis_tasks.find_one(
-                    {"task_id": task_id, "$or": [{"user_id": user["id"]}, {"user": user["id"]}]},
+                    _merge_and_query({"task_id": task_id}, _build_user_scope_query(user["id"])),
                     {"result.analysis_id": 1}
                 )
                 analysis_id = tasks_doc_for_id.get("result", {}).get("analysis_id") if tasks_doc_for_id else None
                 if analysis_id:
                     logger.info(f"🔎 [RESULT] 按analysis_id兜底查询 analysis_reports: {analysis_id}")
-                    mongo_result = await db.analysis_reports.find_one({"analysis_id": analysis_id})
+                    mongo_result = await db.analysis_reports.find_one(
+                        _merge_and_query({"analysis_id": analysis_id}, _build_user_scope_query(user["id"]))
+                    )
 
             if mongo_result:
                 logger.info(f"✅ [RESULT] 从MongoDB找到结果: {task_id}")
@@ -757,6 +778,7 @@ async def get_task_result(
 @router.post("/tasks/{task_id}/retry", response_model=Dict[str, Any])
 async def retry_failed_task(
     task_id: str,
+    background_tasks: BackgroundTasks,
     resume_from_checkpoint: bool = Query(default=True, description="是否从最新 checkpoint 断点续跑"),
     user: dict = Depends(get_current_user),
 ):
@@ -768,6 +790,29 @@ async def retry_failed_task(
             user["id"],
             resume_from_checkpoint=resume_from_checkpoint,
         )
+        retry_request = result.pop("request")
+        resume_state = result.pop("resume_state", None)
+        resume_from_node = result.get("resume_from_node")
+        new_task_id = result["task_id"]
+        user_id = user["id"]
+
+        async def run_retry_task():
+            try:
+                logger.info(f"🚀 [RetryTask] 开始执行重试任务: {new_task_id} (原任务: {task_id})")
+                service = get_simple_analysis_service()
+                await service.execute_analysis_background(
+                    new_task_id,
+                    user_id,
+                    retry_request,
+                    resume_state=resume_state,
+                    resume_from_node=resume_from_node,
+                )
+                logger.info(f"✅ [RetryTask] 重试任务完成: {new_task_id}")
+            except Exception as e:
+                logger.error(f"❌ [RetryTask] 重试任务失败: {new_task_id}, 错误: {e}", exc_info=True)
+
+        background_tasks.add_task(run_retry_task)
+
         return {
             "success": True,
             "data": result,
@@ -826,8 +871,10 @@ async def get_dashboard_stats(
             "completed": 0,
             "failed": 0,
         }
+        user_scope = _build_user_scope_query(user["id"])
 
         async for row in db.analysis_tasks.aggregate([
+            {"$match": user_scope},
             {"$group": {"_id": "$status", "count": {"$sum": 1}}}
         ]):
             status = str(row.get("_id") or "")
@@ -839,7 +886,7 @@ async def get_dashboard_stats(
             elif status == "failed":
                 task_counts["failed"] += count
 
-        report_count = await db.analysis_reports.estimated_document_count()
+        report_count = await db.analysis_reports.count_documents(user_scope)
 
         return {
             "success": True,

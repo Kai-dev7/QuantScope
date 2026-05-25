@@ -42,7 +42,7 @@ def _get_nested_value(data: Dict[str, Any], key_path: str) -> str:
 
 
 class LLMJudge:
-    def __init__(self, llm, min_score: int = 7):
+    def __init__(self, llm, min_score: int = 6):
         self.llm = llm
         self.min_score = min_score
 
