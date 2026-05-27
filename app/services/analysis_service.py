@@ -221,7 +221,8 @@ class AnalysisService:
                 llm_provider=llm_provider,
                 market_type=getattr(task.parameters, 'market_type', "A股"),
                 quick_model_config=quick_model_config,  # 传递模型配置
-                deep_model_config=deep_model_config     # 传递模型配置
+                deep_model_config=deep_model_config,     # 传递模型配置
+                user_id=str(task.user_id),
             )
             if planner_result:
                 config["planner_plan"] = planner_result.to_dict()
@@ -355,7 +356,8 @@ class AnalysisService:
                 llm_provider=llm_provider,
                 market_type=getattr(task.parameters, 'market_type', "A股"),
                 quick_model_config=quick_model_config,  # 传递模型配置
-                deep_model_config=deep_model_config     # 传递模型配置
+                deep_model_config=deep_model_config,     # 传递模型配置
+                user_id=str(task.user_id),
             )
 
             # 获取TradingAgents实例
@@ -460,7 +462,7 @@ class AnalysisService:
 
                 # 根据模型名称确定供应商
                 from app.services.simple_analysis_service import get_provider_by_model_name
-                provider = get_provider_by_model_name(model_name)
+                provider = await get_provider_by_model_name(model_name, user_id=str(task.user_id))
 
                 # 记录使用情况
                 await self._record_token_usage(task, result, provider, model_name)
@@ -780,7 +782,7 @@ class AnalysisService:
                     }
 
             # 根据模型名称动态查找供应商
-            llm_provider = await get_provider_by_model_name(quick_model)
+            llm_provider = await get_provider_by_model_name(quick_model, user_id=str(task.user_id))
 
             # 使用标准配置函数创建完整配置
             config = create_analysis_config(
@@ -1079,7 +1081,7 @@ class AnalysisService:
 
             # 获取模型价格配置
             from app.services.config_service import config_service
-            config = await config_service.get_system_config()
+            config = await config_service.get_system_config(user_id=str(task.user_id))
 
             # 查找对应的 LLM 配置
             llm_config = None

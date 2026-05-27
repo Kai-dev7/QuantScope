@@ -39,6 +39,19 @@ class ConfigService:
                 self.db = get_mongo_db()
         return self.db
 
+    def _build_user_query(self, user_id: Optional[str]) -> Dict[str, Any]:
+        if user_id is None:
+            return {"user_id": None}
+
+        uid_candidates: List[Any] = [user_id]
+        try:
+            uid_candidates.append(ObjectId(user_id))
+        except Exception:
+            pass
+        if len(uid_candidates) == 1:
+            return {"user_id": uid_candidates[0]}
+        return {"user_id": {"$in": uid_candidates}}
+
     # ==================== 市场分类管理 ====================
 
     async def get_market_categories(self, user_id: Optional[str] = None) -> List[MarketCategory]:
@@ -400,7 +413,7 @@ class ConfigService:
             if user_id:
                 # 多用户模式：优先查用户专属配置，没有则查全局配置兜底
                 config_data = await config_collection.find_one(
-                    {"is_active": True, "user_id": user_id},
+                    {"is_active": True, **self._build_user_query(user_id)},
                     sort=[("version", -1)]
                 )
                 if config_data:
@@ -570,9 +583,11 @@ class ConfigService:
         await self.save_system_config(default_config)
         return default_config
     
-    async def save_system_config(self, config: SystemConfig) -> bool:
-        """保存系统配置到数据库"""
+    async def save_system_config(self, config: SystemConfig, user_id: Optional[str] = None) -> bool:
+        """保存系统配置到数据库（支持用户级配置）"""
         try:
+            if user_id is not None:
+                config.user_id = user_id
             print(f"💾 开始保存配置，LLM配置数量: {len(config.llm_configs)}")
 
             # 保存到数据库
@@ -618,6 +633,7 @@ class ConfigService:
 
                 # 暂时跳过统一配置同步，避免冲突
                 # unified_config.sync_to_legacy_format(config)
+                self._invalidate_runtime_config_cache(config.user_id)
 
                 return True
             else:
@@ -629,6 +645,13 @@ class ConfigService:
             import traceback
             traceback.print_exc()
             return False
+
+    def _invalidate_runtime_config_cache(self, user_id: Optional[str] = None) -> None:
+        try:
+            from app.services.config_provider import provider as config_provider
+            config_provider.invalidate(user_id=user_id)
+        except Exception as e:
+            logger.warning(f"运行时配置缓存失效失败: user_id={user_id}, error={e}")
 
     async def delete_llm_config(self, provider: str, model_name: str, user_id: Optional[str] = None) -> bool:
         """删除大模型配置（支持多账号隔离）"""
@@ -712,7 +735,7 @@ class ConfigService:
                 return False
 
             config.default_data_source = data_source_name
-            return await self.save_system_config(config)
+            return await self.save_system_config(config, user_id=user_id)
 
         except Exception as e:
             print(f"设置默认数据源失败: {e}")
@@ -826,8 +849,8 @@ class ConfigService:
             print(f"导出配置失败: {e}")
             return {}
 
-    async def import_config(self, config_data: Dict[str, Any]) -> bool:
-        """导入配置"""
+    async def import_config(self, config_data: Dict[str, Any], user_id: Optional[str] = None) -> bool:
+        """导入配置（支持用户级配置）"""
         try:
             # 验证配置数据格式
             if not self._validate_config_data(config_data):
@@ -871,7 +894,7 @@ class ConfigService:
                 system_settings=config_data.get("system_settings", {})
             )
 
-            return await self.save_system_config(new_config)
+            return await self.save_system_config(new_config, user_id=user_id)
 
         except Exception as e:
             print(f"导入配置失败: {e}")
@@ -933,7 +956,7 @@ class ConfigService:
                 # 如果不存在，添加新配置
                 config.llm_configs.append(llm_config)
 
-            return await self.save_system_config(config)
+            return await self.save_system_config(config, user_id=user_id)
         except Exception as e:
             print(f"更新LLM配置失败: {e}")
             return False
@@ -2804,7 +2827,7 @@ class ConfigService:
                 return False
 
             config.default_data_source = source_name
-            return await self.save_system_config(config)
+            return await self.save_system_config(config, user_id=user_id)
         except Exception as e:
             print(f"设置默认数据源失败: {e}")
             return False

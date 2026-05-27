@@ -16,6 +16,8 @@ async def get_session_detail(
     summary = await session_event_store.get_summary(session_id)
     if not summary:
         raise HTTPException(status_code=404, detail="Session not found")
+    if str(summary.get("user_id", "")) != str(user.get("id", "")):
+        raise HTTPException(status_code=404, detail="Session not found")
 
     events = await session_event_store.get_events(session_id)
     return {
@@ -36,6 +38,8 @@ async def get_session_recovery_payload(
 ):
     payload = await session_recovery_service.get_recovery_payload(session_id)
     if not payload.get("session"):
+        raise HTTPException(status_code=404, detail="Session not found")
+    if str(payload["session"].get("user_id", "")) != str(user.get("id", "")):
         raise HTTPException(status_code=404, detail="Session not found")
     return {
         "success": True,

@@ -318,7 +318,6 @@ export const analysisApi = {
     return request.get('/api/analysis/stats', { params })
   }
 }
-
 // 分析相关的常量
 export const MARKET_TYPES = {
   US: '美股',
@@ -495,4 +494,3 @@ export const getStockPlaceholder = (market: string): string => {
   }
   return placeholders[market] ?? '输入股票代码'
 }
-

@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { analysisApi, AnalysisTask } from '@/services/analysis'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Drawer } from '@/components/ui/drawer'
 import { Skeleton } from '@/components/ui/skeleton'
 import { format } from 'date-fns'
 import { zhCN } from 'date-fns/locale'
@@ -20,21 +21,31 @@ import {
   RefreshCw,
   Trash2,
   Play,
+  FileClock,
+  CircleDashed,
+  GitBranch,
+  RefreshCcw,
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import { toast } from 'sonner'
+import { useState } from 'react'
 
 export default function Tasks() {
   const queryClient = useQueryClient()
+  const [traceOpen, setTraceOpen] = useState(false)
+  const [traceLoading, setTraceLoading] = useState(false)
+  const [traceTask, setTraceTask] = useState<AnalysisTask | null>(null)
+  const [traceData, setTraceData] = useState<any>(null)
   const { data, isLoading } = useQuery({
     queryKey: ['tasks'],
     queryFn: () => analysisApi.getTasks({ page_size: 100 }),
   })
 
   const retryMutation = useMutation({
-    mutationFn: (taskId: string) => analysisApi.retryTask(taskId),
+    mutationFn: ({ taskId, resumeFromCheckpoint }: { taskId: string; resumeFromCheckpoint: boolean }) =>
+      analysisApi.retryTask(taskId, { resume_from_checkpoint: resumeFromCheckpoint }),
     onSuccess: () => {
-      toast.success('任务已重新启动')
+      toast.success('任务已重新提交')
       queryClient.invalidateQueries({ queryKey: ['tasks'] })
     },
     onError: () => toast.error('重试失败'),
@@ -50,6 +61,21 @@ export default function Tasks() {
   })
 
   const tasks: AnalysisTask[] = data?.tasks || []
+
+  const openTrace = async (task: AnalysisTask) => {
+    setTraceTask(task)
+    setTraceOpen(true)
+    setTraceLoading(true)
+    try {
+      const res = await analysisApi.getTaskTrace(task.task_id)
+      setTraceData(res?.data?.data || res?.data || null)
+    } catch {
+      toast.error('加载轨迹失败')
+      setTraceData(null)
+    } finally {
+      setTraceLoading(false)
+    }
+  }
 
   const statusGroups = {
     running: tasks.filter((t) => t.status === 'running'),
@@ -95,12 +121,29 @@ export default function Tasks() {
           {safeFormat(task.created_at)}
         </span>
         {task.status === 'failed' && (
-          <button
-            onClick={() => retryMutation.mutate(task.task_id)}
-            className="p-2 rounded-lg hover:bg-white/10 text-white/40 hover:text-blue-400"
-          >
-            <RefreshCw className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => openTrace(task)}
+              className="p-2 rounded-lg hover:bg-white/10 text-white/40 hover:text-cyan-400"
+              title="查看执行轨迹"
+            >
+              <FileClock className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => retryMutation.mutate({ taskId: task.task_id, resumeFromCheckpoint: true })}
+              className="p-2 rounded-lg hover:bg-white/10 text-white/40 hover:text-blue-400"
+              title="断点续跑"
+            >
+              <CircleDashed className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => retryMutation.mutate({ taskId: task.task_id, resumeFromCheckpoint: false })}
+              className="p-2 rounded-lg hover:bg-white/10 text-white/40 hover:text-green-400"
+              title="完整重跑"
+            >
+              <RefreshCcw className="w-4 h-4" />
+            </button>
+          </div>
         )}
         {(task.status === 'running' || task.status === 'pending') && (
           <button
@@ -178,6 +221,88 @@ export default function Tasks() {
           color="red"
         />
       </div>
+
+      <Drawer
+        open={traceOpen}
+        onClose={() => setTraceOpen(false)}
+        title="任务执行轨迹"
+        width="560px"
+      >
+        <div className="p-5 space-y-4">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="text-white font-semibold text-base">
+                {traceTask?.stock_name || traceTask?.stock_code || traceTask?.task_id}
+              </div>
+              <div className="text-white/40 text-xs break-all mt-1">{traceTask?.task_id}</div>
+            </div>
+            <div className={clsx(
+              'px-3 py-1 rounded-full text-xs font-medium',
+              traceData?.recoverable ? 'bg-green-500/10 text-green-400' : 'bg-white/10 text-white/40'
+            )}>
+              {traceData?.recoverable ? '可断点续跑' : '仅完整重跑'}
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-white/10 bg-white/5 p-4 space-y-2">
+            <div className="text-xs text-white/40">恢复建议</div>
+            <div className="text-sm text-white/80">
+              {traceData?.recovery?.checkpoint?.state_summary?.resume_from_node
+                || traceData?.recovery?.checkpoint?.state_summary?.next_node
+                || '暂无恢复节点'}
+            </div>
+            <div className="text-xs text-white/40 break-all">
+              checkpoint: {traceData?.recovery?.checkpoint?.checkpoint_id || '--'}
+            </div>
+          </div>
+
+          {traceLoading ? (
+            <div className="space-y-2">
+              <Skeleton className="h-16" />
+              <Skeleton className="h-24" />
+              <Skeleton className="h-24" />
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {(traceData?.events || []).length === 0 ? (
+                <div className="text-center py-10 text-white/30">暂无执行轨迹</div>
+              ) : (
+                (traceData?.events || []).map((event: any) => (
+                  <div key={`${event.seq}-${event.event_type}`} className="rounded-xl border border-white/10 bg-[#111827] p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-sm text-white font-medium">{event.event_type}</div>
+                      <div className="text-xs text-white/30">{safeFormat(event.timestamp, 'MM/dd HH:mm:ss')}</div>
+                    </div>
+                    <div className="text-xs text-white/40 mt-1">{event.node_name || '--'}</div>
+                    {!!Object.keys(event.payload || {}).length && (
+                      <pre className="mt-2 text-xs text-white/70 whitespace-pre-wrap break-words bg-black/20 rounded-lg p-3 overflow-auto">
+                        {JSON.stringify(event.payload, null, 2)}
+                      </pre>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+
+          <div className="flex gap-2 pt-2">
+            <button
+              className="flex-1 rounded-lg bg-blue-500/20 text-blue-300 px-3 py-2 text-sm hover:bg-blue-500/30 disabled:opacity-50"
+              onClick={() => traceTask && retryMutation.mutate({ taskId: traceTask.task_id, resumeFromCheckpoint: true })}
+              disabled={!traceTask}
+            >
+              断点续跑
+            </button>
+            <button
+              className="flex-1 rounded-lg bg-white/10 text-white px-3 py-2 text-sm hover:bg-white/15 disabled:opacity-50"
+              onClick={() => traceTask && retryMutation.mutate({ taskId: traceTask.task_id, resumeFromCheckpoint: false })}
+              disabled={!traceTask}
+            >
+              完整重跑
+            </button>
+          </div>
+        </div>
+      </Drawer>
     </div>
   )
 }

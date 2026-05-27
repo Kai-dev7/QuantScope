@@ -763,7 +763,7 @@ async def add_data_source_config(
         ds_config = DataSourceConfig(**_req)
         config.data_source_configs.append(ds_config)
 
-        success = await config_service.save_system_config(config)
+        success = await config_service.save_system_config(config, user_id=user_id)
         if success:
             # 🆕 自动创建数据源分组关系
             market_categories = _req.get('market_categories', [])
@@ -1325,7 +1325,7 @@ async def delete_data_source_config(
             if ds_config.name == name:
                 config.data_source_configs.pop(i)
 
-                success = await config_service.save_system_config(config)
+                success = await config_service.save_system_config(config, user_id=user_id)
                 if success:
                     # 审计日志（忽略异常）
                     try:

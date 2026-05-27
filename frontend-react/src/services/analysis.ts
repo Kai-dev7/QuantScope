@@ -197,8 +197,14 @@ export const analysisApi = {
   },
 
   // Retry failed task
-  retryTask: async (taskId: string) => {
-    const response = await apiClient.post(`/analysis/tasks/${taskId}/retry`)
+  retryTask: async (taskId: string, params?: { resume_from_checkpoint?: boolean }) => {
+    const response = await apiClient.post(`/analysis/tasks/${taskId}/retry`, {}, { params })
+    return response.data
+  },
+
+  // Get task trace
+  getTaskTrace: async (taskId: string) => {
+    const response = await apiClient.get(`/analysis/tasks/${taskId}/trace`)
     return response.data
   },
 

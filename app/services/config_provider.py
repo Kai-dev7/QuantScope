@@ -17,26 +17,30 @@ class ConfigProvider:
 
     def __init__(self, ttl_seconds: int = 60) -> None:
         self._ttl = timedelta(seconds=ttl_seconds)
-        self._cache_settings: Optional[Dict[str, Any]] = None
-        self._cache_time: Optional[datetime] = None
+        self._cache_settings: Dict[Optional[str], Dict[str, Any]] = {}
+        self._cache_time: Dict[Optional[str], datetime] = {}
 
-    def invalidate(self) -> None:
-        self._cache_settings = None
-        self._cache_time = None
+    def invalidate(self, user_id: Optional[str] = None) -> None:
+        if user_id is None:
+            self._cache_settings.clear()
+            self._cache_time.clear()
+            return
+        self._cache_settings.pop(user_id, None)
+        self._cache_time.pop(user_id, None)
 
-    def _is_cache_valid(self) -> bool:
+    def _is_cache_valid(self, user_id: Optional[str] = None) -> bool:
         return (
-            self._cache_settings is not None
-            and self._cache_time is not None
-            and __import__("datetime").datetime.now(__import__("datetime").timezone.utc) - self._cache_time < self._ttl
+            user_id in self._cache_settings
+            and user_id in self._cache_time
+            and __import__("datetime").datetime.now(__import__("datetime").timezone.utc) - self._cache_time[user_id] < self._ttl
         )
 
-    async def get_effective_system_settings(self) -> Dict[str, Any]:
-        if self._is_cache_valid():
-            return dict(self._cache_settings or {})
+    async def get_effective_system_settings(self, user_id: Optional[str] = None) -> Dict[str, Any]:
+        if self._is_cache_valid(user_id):
+            return dict(self._cache_settings.get(user_id) or {})
 
         # Load DB settings
-        cfg = await config_service.get_system_config()
+        cfg = await config_service.get_system_config(user_id=user_id)
         base: Dict[str, Any] = {}
         if cfg and getattr(cfg, "system_settings", None):
             try:
@@ -66,10 +70,10 @@ class ConfigProvider:
         # For now, keep minimal behavior to avoid surprising surfaces.
 
         # Cache
-        self._cache_settings = dict(merged)
-        self._cache_time = __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
+        self._cache_settings[user_id] = dict(merged)
+        self._cache_time[user_id] = __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
         return dict(merged)
-    async def get_system_settings_meta(self) -> Dict[str, Dict[str, Any]]:
+    async def get_system_settings_meta(self, user_id: Optional[str] = None) -> Dict[str, Dict[str, Any]]:
         """Return metadata for system settings keys including sensitivity, editability and source.
         Fields per key:
           - sensitive: bool (by keyword patterns)
@@ -78,7 +82,7 @@ class ConfigProvider:
           - has_value: bool (effective value is not None/empty)
         """
         # Load DB settings raw
-        cfg = await config_service.get_system_config()
+        cfg = await config_service.get_system_config(user_id=user_id)
         db_settings: Dict[str, Any] = {}
         if cfg and getattr(cfg, "system_settings", None):
             try:
@@ -118,4 +122,3 @@ class ConfigProvider:
 
 # Module-level singleton
 provider = ConfigProvider(ttl_seconds=60)
-

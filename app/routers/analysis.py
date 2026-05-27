@@ -19,6 +19,7 @@ from app.services.analysis_service import get_analysis_service
 from app.core.database import get_mongo_db
 from app.services.simple_analysis_service import get_simple_analysis_service
 from app.services.websocket_manager import get_websocket_manager
+from app.services.sessions import session_event_store, session_recovery_service
 from app.services.stock_extraction_service import stock_extraction_service
 from tradingagents.skills import SkillMatchContext, SkillSelector, project_batch_skill_parameters
 from app.models.analysis import (
@@ -773,6 +774,44 @@ async def get_task_result(
     except Exception as e:
         logger.error(f"❌ [RESULT] 获取任务结果失败: {e}")
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/tasks/{task_id}/trace", response_model=Dict[str, Any])
+async def get_task_trace(
+    task_id: str,
+    user: dict = Depends(get_current_user),
+):
+    """获取失败任务/恢复任务的执行轨迹。"""
+    try:
+        db = get_mongo_db()
+        task_doc = await db.analysis_tasks.find_one(
+            _merge_and_query({"task_id": task_id}, _build_user_scope_query(user["id"])),
+            {"_id": 0},
+        )
+        if not task_doc:
+            raise HTTPException(status_code=404, detail="任务不存在")
+
+        session_id = task_doc.get("task_id") or task_id
+        summary = await session_event_store.get_summary(session_id)
+        events = await session_event_store.get_events(session_id)
+        recovery = await session_recovery_service.get_recovery_payload(session_id)
+
+        return {
+            "success": True,
+            "data": {
+                "task": task_doc,
+                "session": summary,
+                "events": events,
+                "recovery": recovery,
+                "recoverable": bool((recovery or {}).get("checkpoint")),
+            },
+            "message": "任务轨迹获取成功",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ 获取任务轨迹失败: {task_id} - {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/tasks/{task_id}/retry", response_model=Dict[str, Any])

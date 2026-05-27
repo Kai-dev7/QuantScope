@@ -91,7 +91,7 @@ def _is_valid_api_key(api_key: Optional[str]) -> bool:
     return True
 
 
-async def get_provider_by_model_name(model_name: str) -> str:
+async def get_provider_by_model_name(model_name: str, user_id: Optional[str] = None) -> str:
     """
     根据模型名称从数据库配置中查找对应的供应商（异步版本）
 
@@ -103,7 +103,7 @@ async def get_provider_by_model_name(model_name: str) -> str:
     """
     try:
         # 从配置服务获取系统配置
-        system_config = await config_service.get_system_config()
+        system_config = await config_service.get_system_config(user_id=user_id)
         if not system_config or not system_config.llm_configs:
             logger.warning(f"⚠️ 系统配置为空，使用默认供应商映射")
             return _get_default_provider_by_model(model_name)
@@ -124,7 +124,7 @@ async def get_provider_by_model_name(model_name: str) -> str:
         return _get_default_provider_by_model(model_name)
 
 
-def get_provider_by_model_name_sync(model_name: str) -> str:
+def get_provider_by_model_name_sync(model_name: str, user_id: Optional[str] = None) -> str:
     """
     根据模型名称从数据库配置中查找对应的供应商（同步版本）
 
@@ -134,7 +134,7 @@ def get_provider_by_model_name_sync(model_name: str) -> str:
     Returns:
         str: 供应商名称，如 'dashscope', 'openai' 等
     """
-    provider_info = get_provider_and_url_by_model_sync(model_name)
+    provider_info = get_provider_and_url_by_model_sync(model_name, user_id=user_id)
     return provider_info["provider"]
 
 
@@ -164,7 +164,7 @@ def _get_active_model_names_sync() -> set[str]:
         return set()
 
 
-def get_provider_and_url_by_model_sync(model_name: str) -> dict:
+def get_provider_and_url_by_model_sync(model_name: str, user_id: Optional[str] = None) -> dict:
     """
     根据模型名称从数据库配置中查找对应的供应商和 API URL（同步版本）
 
@@ -185,9 +185,24 @@ def get_provider_and_url_by_model_sync(model_name: str) -> dict:
         client = MongoClient(settings.MONGO_URI)
         db = client[settings.MONGO_DB]
 
-        # 查询最新的活跃配置
+        # 查询当前用户的活跃配置，找不到则回退全局配置。
         configs_collection = db.system_configs
-        doc = configs_collection.find_one({"is_active": True}, sort=[("version", -1)])
+        doc = None
+        if user_id:
+            uid_candidates: list[Any] = [user_id]
+            try:
+                uid_candidates.append(ObjectId(user_id))
+            except Exception:
+                pass
+            doc = configs_collection.find_one(
+                {"is_active": True, "user_id": {"$in": uid_candidates}},
+                sort=[("version", -1)],
+            )
+        if not doc:
+            doc = configs_collection.find_one(
+                {"is_active": True, "user_id": None},
+                sort=[("version", -1)],
+            )
 
         if doc and "llm_configs" in doc:
             llm_configs = doc["llm_configs"]
@@ -472,7 +487,8 @@ def create_analysis_config(
     market_type: str = "A股",
     quick_model_config: dict = None,  # 新增：快速模型的完整配置
     deep_model_config: dict = None,   # 新增：深度模型的完整配置
-    skill_definition = None
+    skill_definition = None,
+    user_id: Optional[str] = None,
 ) -> dict:
     """
     创建分析配置 - 支持数字等级和中文等级
@@ -607,8 +623,8 @@ def create_analysis_config(
     # 🔧 获取 backend_url 和 API Key（优先级：模型配置 > 厂家配置 > 环境变量）
     try:
         # 1️⃣ 优先从数据库获取（包含模型配置的 api_base、API Key 和厂家的 default_base_url、API Key）
-        quick_provider_info = get_provider_and_url_by_model_sync(quick_model)
-        deep_provider_info = get_provider_and_url_by_model_sync(deep_model)
+        quick_provider_info = get_provider_and_url_by_model_sync(quick_model, user_id=user_id)
+        deep_provider_info = get_provider_and_url_by_model_sync(deep_model, user_id=user_id)
 
         config["backend_url"] = quick_provider_info["backend_url"]
         config["quick_api_key"] = quick_provider_info.get("api_key")  # 🔥 保存快速模型的 API Key
@@ -1562,8 +1578,14 @@ class SimpleAnalysisService:
                 logger.info(f"🤖 自动推荐模型: quick={quick_model}, deep={deep_model}")
 
             # 🔧 根据快速模型和深度模型分别查找对应的供应商和 API URL
-            quick_provider_info = get_provider_and_url_by_model_sync(quick_model)
-            deep_provider_info = get_provider_and_url_by_model_sync(deep_model)
+            quick_provider_info = get_provider_and_url_by_model_sync(
+                quick_model,
+                user_id=str(user_id) if user_id is not None else None,
+            )
+            deep_provider_info = get_provider_and_url_by_model_sync(
+                deep_model,
+                user_id=str(user_id) if user_id is not None else None,
+            )
 
             quick_provider = quick_provider_info["provider"]
             deep_provider = deep_provider_info["provider"]
@@ -1648,6 +1670,7 @@ class SimpleAnalysisService:
                 llm_provider=quick_provider,  # 主要使用快速模型的供应商
                 market_type=market_type,  # 使用前端传递的市场类型
                 skill_definition=selected_skill,
+                user_id=str(user_id) if user_id is not None else None,
             )
 
             # 🔧 添加混合模式配置
