@@ -8,8 +8,9 @@ services:
   backend:
     build:
       context: .
-      dockerfile: Dockerfile.backend-dev
-    image: quantscope-backend-dev:latest
+      # dockerfile: Dockerfile.backend-dev
+      dockerfile: Dockerfile.backend
+    image: quantscope-backend:v1.0.1
     container_name: quantscope-backend
     ports:
       - "8000:8000"

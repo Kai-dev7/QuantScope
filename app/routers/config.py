@@ -297,6 +297,7 @@ async def add_llm_provider(
 ):
     """添加大模型厂家（方案A：REST不接受密钥，强制清洗）"""
     try:
+        user_id = _auth_user_id(current_user)
         sanitized = request.model_dump()
         if 'api_key' in sanitized:
             sanitized['api_key'] = ""
